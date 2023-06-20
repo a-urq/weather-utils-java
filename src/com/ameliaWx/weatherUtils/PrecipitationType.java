@@ -1,0 +1,10 @@
+package com.ameliaWx.weatherUtils;
+
+public enum PrecipitationType {
+	RAIN, FREEZING_RAIN_SURFACE, ICE_PELLETS, VERY_DRY_SNOW, FRZR_SNOW_MIX, RAIN_SNOW_MIX, FREEZING_RAIN_ELEVATED, DRY_SNOW,
+	WET_SNOW, RAIN_ICEP_MIX, FRZR_ICEP_MIX, ICEP_SNOW_MIX, // 12-type stuff, GRAUPEL and HAIL currently unused, FRZR_SNOW and RAIN_ICEP in place of it.
+	
+	FREEZING_RAIN, // encompasses both FREEZING_RAIN_SURFACE and FREEZING_RAIN_ELEVATED
+	
+	SNOW; // encompasses WET_SNOW, DRY_SNOW, and VERY_DRY_SNOW
+}
