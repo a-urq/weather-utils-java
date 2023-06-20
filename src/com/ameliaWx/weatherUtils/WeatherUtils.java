@@ -407,10 +407,10 @@ public class WeatherUtils {
 		double parcelDewpoint = -1024.0;
 
 		switch (pathType) {
-		case SURFACE:
-			parcelPressure = pressure[pressure.length - 1];
-			parcelTemperature = temperature[pressure.length - 1];
-			parcelDewpoint = dewpoint[pressure.length - 1];
+		case SURFACE_BASED:
+			parcelPressure = pressure[dewpoint.length - 1];
+			parcelTemperature = temperature[dewpoint.length - 1];
+			parcelDewpoint = dewpoint[dewpoint.length - 1];
 
 			break;
 		case MIXED_LAYER_50MB:
