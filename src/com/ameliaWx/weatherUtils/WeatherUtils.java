@@ -34,6 +34,9 @@ public class WeatherUtils {
 	/** Units: J kg^-1 K^-1 */
 	public static final double specificHeatCapacityWaterVapor = 1864; // constant pressure
 
+	/** Units: m s^-2 */
+	public static final double gravAccel = 9.81;
+
 	/**
 	 * Computes the partial density of water vapor, also called absolute humidity.
 	 * 
@@ -102,16 +105,30 @@ public class WeatherUtils {
 	}
 
 	/**
+	 * Computes height above sea level at a given pressure. Note that this assumes a
+	 * constant scale height of 7290 m, regardless of the air temperatures.
+	 * 
+	 * @param seaLevelPres  Units: Pascals
+	 * @param pressureAtAlt Units: Pascals
+	 * @return <b>heightAtPressure</b> Units: Meter
+	 */
+	public static double heightAtPressure(double seaLevelPres, double pressureAtAlt) {
+		double scaleHeight = 8500; // Meters
+
+		return scaleHeight * Math.log(seaLevelPres / pressureAtAlt);
+	}
+
+	/**
 	 * Computes the mixing ratio using total pressure, vapor pressure, and
 	 * temperature.
 	 * 
-	 * @param pressure      Units: Pascals
-	 * @param dewpoint      Units: Kelvins
+	 * @param pressure Units: Pascals
+	 * @param dewpoint Units: Kelvins
 	 * @return <b>mixingRatio</b> Units: Fraction
 	 */
 	public static double mixingRatio(double pressure, double dewpoint) {
 		double vaporPressure = WeatherUtils.vaporPressure(dewpoint);
-		double mixingRatio = 0.62197 * (vaporPressure)/(pressure - vaporPressure);
+		double mixingRatio = 0.62197 * (vaporPressure) / (pressure - vaporPressure);
 
 		return mixingRatio;
 	}
@@ -148,7 +165,7 @@ public class WeatherUtils {
 	 * @return <b>pressureAtHeight</b> Units: Pascals
 	 */
 	public static double pressureAtHeight(double seaLevelPres, double heightAboveSeaLevel, double temperature) {
-		double scaleHeight = (molarGasConstant * temperature) / (avgMolarMass * 9.81); // Meters
+		double scaleHeight = (molarGasConstant * temperature) / (avgMolarMass * gravAccel); // Meters
 
 		return seaLevelPres * Math.exp(-heightAboveSeaLevel / scaleHeight);
 	}
@@ -362,28 +379,431 @@ public class WeatherUtils {
 	 * of the library
 	 */
 
-	/**
-	 * Moist Adiabatic Lapse Rate intended for use in computing parcel paths. Found
-	 * it in my old code, actually no clue how it works and only a faint idea where
-	 * I got it.
-	 * 
-	 * @param temperature Units: Kelvins
-	 * @param pressure    Units: Pascals
-	 * @return <b>moistAdiabaticLapseRate</b> Units: K m^-1
-	 */
-	public static double moistAdiabaticLapseRate(double temperature, double pressure) {
-		double mixingRatio = mixingRatio(pressure, temperature);
-
-		double lapseRate = 9.81 * (1 + ((2501000 * mixingRatio) / (287 * temperature)))
-				/ (1003.5 + 10000 * ((250100 * 2501 * mixingRatio) / (461.5 * temperature * temperature)));
-
-		return lapseRate;
-	}
-
 	/** Units: K m^-1 */
 	public static final double dryAdiabaticLapseRate = 0.0098;
 	/** Units: K m^-1 */
 	public static final double dewpointLapseRate = 0.0018;
+
+	/**
+	 * Computes the bulk wind shear
+	 * 
+	 * @param pressure   Units: array of Pascals
+	 * @param uWind      Units: array of m s^-1
+	 * @param vWind      Units: array of m s^-1
+	 * @param lowerLimit Units: Meters
+	 * @param upperLimit Units: Meters
+	 * @return <b>bulkShearMagnitude</b> Units: m s^-1
+	 */
+	public static double bulkShearMagnitude(double[] pressure, double[] uWind, double[] vWind, double lowerLimit,
+			double upperLimit) {
+		double uWindLower = logInterp(pressure, uWind,
+				WeatherUtils.pressureAtHeight(pressure[pressure.length - 1], lowerLimit));
+		double vWindLower = logInterp(pressure, vWind,
+				WeatherUtils.pressureAtHeight(pressure[pressure.length - 1], lowerLimit));
+		double uWindUpper = logInterp(pressure, uWind,
+				WeatherUtils.pressureAtHeight(pressure[pressure.length - 1], upperLimit));
+		double vWindUpper = logInterp(pressure, vWind,
+				WeatherUtils.pressureAtHeight(pressure[pressure.length - 1], upperLimit));
+
+		double bulkShearMagnitude = Math.hypot(uWindUpper - uWindLower, vWindUpper - vWindLower);
+
+		return bulkShearMagnitude;
+	}
+
+	/**
+	 * Computes the convective available potential energy given a parcel path.
+	 * Assumes that all arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param envPressure    Units: array of Pascals
+	 * @param envTemperature Units: array of Kelvins
+	 * @param envDewpoint    Units: array of Kelvins
+	 * @param parcelPath     Type: ArrayList of RecordAtLevel, should be type
+	 *                       returned by computeParcelPath()
+	 * @return <b>potentialEnergy</b> Units: J kg^-1
+	 */
+	public static double computeCape(double[] envPressure, double[] envTemperature, double[] envDewpoint,
+			ArrayList<RecordAtLevel> parcelPath) {
+		double[] parcelPressure = new double[parcelPath.size()];
+		double[] parcelHeight = new double[parcelPath.size()];
+		double[] parcelTemperature = new double[parcelPath.size()];
+		double[] parcelDewpoint = new double[parcelPath.size()];
+
+		for (int i = 0; i < parcelPath.size(); i++) {
+			parcelPressure[i] = parcelPath.get(parcelPath.size() - 1 - i).pressure;
+			parcelHeight[i] = parcelPath.get(parcelPath.size() - 1 - i).height;
+			parcelTemperature[i] = parcelPath.get(parcelPath.size() - 1 - i).temperature;
+			parcelDewpoint[i] = parcelPath.get(parcelPath.size() - 1 - i).dewpoint;
+		}
+
+		return computeCape(envPressure, envTemperature, envDewpoint, parcelPressure, parcelHeight, parcelTemperature,
+				parcelDewpoint);
+	}
+
+	/**
+	 * Computes the convective available potential energy given a parcel path.
+	 * Assumes that all arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param envPressure       Units: array of Pascals
+	 * @param envTemperature    Units: array of Kelvins
+	 * @param envDewpoint       Units: array of Kelvins
+	 * @param parcelPressure    Units: array of Pascals
+	 * @param parcelTemperature Units: array of Kelvins
+	 * @param parcelDewpoint    Units: array of Kelvins
+	 * @return <b>potentialEnergy</b> Units: J kg^-1
+	 */
+	public static double computeCape(double[] envPressure, double[] envTemperature, double[] envDewpoint,
+			double[] parcelPressure, double[] parcelHeight, double[] parcelTemperature, double[] parcelDewpoint) {
+		double potentialEnergy = 0.0; // J kg^-1
+
+		double equilibriumLevel = equilibriumLevel(envPressure, envTemperature, envDewpoint, parcelPressure,
+				parcelHeight, parcelTemperature, parcelDewpoint);
+		double levelOfFreeConvection = levelOfFreeConvection(envPressure, envTemperature, envDewpoint, parcelPressure,
+				parcelHeight, parcelTemperature, parcelDewpoint);
+
+		for (int i = 0; i < parcelPressure.length - 1; i++) {
+			double pPres = parcelPressure[i];
+			double height = parcelHeight[i];
+
+//			System.out.printf("%6.1f\t", height);
+//			System.out.printf("%6.1f\t", equilibriumLevel);
+
+			if (height < equilibriumLevel && height > levelOfFreeConvection && pPres >= envPressure[0]) {
+				double pTemp = parcelTemperature[i];
+				double pDwpt = parcelDewpoint[i];
+
+				double ePres = parcelPressure[i];
+				double eTemp = logInterp(envPressure, envTemperature, ePres);
+				double eDwpt = logInterp(envPressure, envDewpoint, ePres);
+
+				double eVirtTemp = virtualTemperature(eTemp, eDwpt, ePres);
+				double pVirtTemp = virtualTemperature(pTemp, pDwpt, pPres);
+
+				double energyAdded = gravAccel * (pVirtTemp - eVirtTemp) / eVirtTemp;
+//				System.out.println(dz);
+//				System.out.printf("%6.1f\t", ePres/100.0);
+//				System.out.print(energyAdded + " energyAdded\t");
+//				System.out.print((energyAdded > 0) + " energyAdded\t");
+
+				if (energyAdded > 0 && pDwpt >= pTemp) {
+					double dz = parcelHeight[i] - parcelHeight[i + 1];
+
+					potentialEnergy += energyAdded * dz;
+
+//					System.out.printf("%7.1f\t%5.1f\t%5.1f\n", ePres/100.0, eVirtTemp, pVirtTemp);
+//					System.out.println(energyAdded * dz + " J kg^-1 added");
+//					System.out.println(potentialEnergy + " J kg^-1 total");
+				} else {
+					return potentialEnergy;
+				}
+			}
+		}
+
+		return potentialEnergy;
+	}
+
+	/**
+	 * Computes SBCAPE given an environmental sounding Assumes that all arrays are
+	 * sorted in order of increasing pressure.
+	 * 
+	 * @param envPressure    Units: array of Pascals
+	 * @param envTemperature Units: array of Kelvins
+	 * @param envDewpoint    Units: array of Kelvins
+	 * @return <b>potentialEnergy</b> Units: J kg^-1
+	 */
+	public static double computeSbcape(double[] envPressure, double[] envTemperature, double[] envDewpoint) {
+		ArrayList<RecordAtLevel> parcelPath = computeParcelPath(envPressure, envTemperature, envDewpoint,
+				ParcelPath.SURFACE_BASED, false);
+
+		return computeCape(envPressure, envTemperature, envDewpoint, parcelPath);
+	}
+
+	/**
+	 * Computes ML50CAPE given an environmental sounding Assumes that all arrays are
+	 * sorted in order of increasing pressure.
+	 * 
+	 * @param envPressure    Units: array of Pascals
+	 * @param envTemperature Units: array of Kelvins
+	 * @param envDewpoint    Units: array of Kelvins
+	 * @return <b>potentialEnergy</b> Units: J kg^-1
+	 */
+	public static double computeMl50cape(double[] envPressure, double[] envTemperature, double[] envDewpoint) {
+		ArrayList<RecordAtLevel> parcelPath = computeParcelPath(envPressure, envTemperature, envDewpoint,
+				ParcelPath.MIXED_LAYER_50MB, false);
+
+		return computeCape(envPressure, envTemperature, envDewpoint, parcelPath);
+	}
+
+	/**
+	 * Computes ML100CAPE given an environmental sounding Assumes that all arrays
+	 * are sorted in order of increasing pressure.
+	 * 
+	 * @param envPressure    Units: array of Pascals
+	 * @param envTemperature Units: array of Kelvins
+	 * @param envDewpoint    Units: array of Kelvins
+	 * @return <b>potentialEnergy</b> Units: J kg^-1
+	 */
+	public static double computeMl100cape(double[] envPressure, double[] envTemperature, double[] envDewpoint) {
+		ArrayList<RecordAtLevel> parcelPath = computeParcelPath(envPressure, envTemperature, envDewpoint,
+				ParcelPath.MIXED_LAYER_100MB, false);
+
+		return computeCape(envPressure, envTemperature, envDewpoint, parcelPath);
+	}
+
+	/**
+	 * Computes MLCAPE given an environmental sounding Assumes that all arrays are
+	 * sorted in order of increasing pressure.
+	 * 
+	 * @param envPressure     Units: array of Pascals
+	 * @param envTemperature  Units: array of Kelvins
+	 * @param envDewpoint     Units: array of Kelvins
+	 * @param mixedLayerDepth Units: Pascals
+	 * @return <b>potentialEnergy</b> Units: J kg^-1
+	 */
+	public static double computeMlcape(double[] envPressure, double[] envTemperature, double[] envDewpoint,
+			double mixedLayerDepth) {
+		ArrayList<RecordAtLevel> parcelPath = computeMixedLayerParcelPath(envPressure, envTemperature, envDewpoint,
+				mixedLayerDepth, false);
+
+		return computeCape(envPressure, envTemperature, envDewpoint, parcelPath);
+	}
+
+	/**
+	 * Computes MUCAPE given an environmental sounding Assumes that all arrays are
+	 * sorted in order of increasing pressure.
+	 * 
+	 * @param envPressure    Units: array of Pascals
+	 * @param envTemperature Units: array of Kelvins
+	 * @param envDewpoint    Units: array of Kelvins
+	 * @return <b>potentialEnergy</b> Units: J kg^-1
+	 */
+	public static double computeMucape(double[] envPressure, double[] envTemperature, double[] envDewpoint) {
+		ArrayList<RecordAtLevel> parcelPath = computeParcelPath(envPressure, envTemperature, envDewpoint,
+				ParcelPath.MOST_UNSTABLE, false);
+
+		return computeCape(envPressure, envTemperature, envDewpoint, parcelPath);
+	}
+
+	/**
+	 * Computes the convective inhibition given a parcel path. Assumes that all
+	 * arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param envPressure    Units: array of Pascals
+	 * @param envTemperature Units: array of Kelvins
+	 * @param envDewpoint    Units: array of Kelvins
+	 * @param parcelPath     Type: ArrayList of RecordAtLevel, should be type
+	 *                       returned by computeParcelPath()
+	 * @return <b>potentialEnergy</b> Units: J kg^-1
+	 */
+	public static double computeCinh(double[] envPressure, double[] envTemperature, double[] envDewpoint,
+			ArrayList<RecordAtLevel> parcelPath) {
+		double[] parcelPressure = new double[parcelPath.size()];
+		double[] parcelHeight = new double[parcelPath.size()];
+		double[] parcelTemperature = new double[parcelPath.size()];
+		double[] parcelDewpoint = new double[parcelPath.size()];
+
+		for (int i = 0; i < parcelPath.size(); i++) {
+			parcelPressure[i] = parcelPath.get(parcelPath.size() - 1 - i).pressure;
+			parcelHeight[i] = parcelPath.get(parcelPath.size() - 1 - i).height;
+			parcelTemperature[i] = parcelPath.get(parcelPath.size() - 1 - i).temperature;
+			parcelDewpoint[i] = parcelPath.get(parcelPath.size() - 1 - i).dewpoint;
+		}
+
+		return computeCinh(envPressure, envTemperature, envDewpoint, parcelPressure, parcelHeight, parcelTemperature,
+				parcelDewpoint);
+	}
+
+	/**
+	 * Computes the convective available potential energy given a parcel path.
+	 * Assumes that all arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param envPressure       Units: array of Pascals
+	 * @param envTemperature    Units: array of Kelvins
+	 * @param envDewpoint       Units: array of Kelvins
+	 * @param parcelPressure    Units: array of Pascals
+	 * @param parcelTemperature Units: array of Kelvins
+	 * @param parcelDewpoint    Units: array of Kelvins
+	 * @return <b>potentialEnergy</b> Units: J kg^-1
+	 */
+	public static double computeCinh(double[] envPressure, double[] envTemperature, double[] envDewpoint,
+			double[] parcelPressure, double[] parcelHeight, double[] parcelTemperature, double[] parcelDewpoint) {
+		double potentialEnergy = 0.0; // J kg^-1
+
+		double surfacePressure = envPressure[envPressure.length - 1]; // Pascals
+
+		double levelOfFreeConvection = levelOfFreeConvection(envPressure, envTemperature, envDewpoint, parcelPressure,
+				parcelHeight, parcelTemperature, parcelDewpoint);
+
+		double dz = heightAtPressure(parcelPressure[1], parcelPressure[0]);
+
+		// debugging ONLY, remove for final version
+		assert dz > 19.98 && dz < 20.02;
+
+		for (int i = 0; i < parcelPressure.length; i++) {
+			double pPres = parcelPressure[i];
+			double height = heightAtPressure(surfacePressure, pPres);
+
+//			System.out.printf("%6.1f\t", height);
+//			System.out.printf("%6.1f\t", equilibriumLevel);
+
+			if (height < levelOfFreeConvection && pPres >= envPressure[0]) {
+				double pTemp = parcelTemperature[i];
+				double pDwpt = parcelDewpoint[i];
+
+				double ePres = parcelPressure[i];
+				double eTemp = logInterp(envPressure, envTemperature, ePres);
+				double eDwpt = logInterp(envPressure, envDewpoint, ePres);
+
+				double eVirtTemp = virtualTemperature(eTemp, eDwpt, ePres);
+				double pVirtTemp = virtualTemperature(pTemp, pDwpt, pPres);
+
+				double energyAdded = gravAccel * (pVirtTemp - eVirtTemp) / eVirtTemp;
+//				System.out.println(dz);
+//				System.out.printf("%6.1f\t", ePres/100.0);
+//				System.out.print(energyAdded + " energyAdded\t");
+//				System.out.print((energyAdded > 0) + " energyAdded\t");
+
+				if (energyAdded < 0) {
+					potentialEnergy += energyAdded * dz;
+
+//					System.out.printf("%7.1f\t%5.1f\t%5.1f\n", ePres/100.0, eVirtTemp, pVirtTemp);
+//					System.out.println(energyAdded * dz + " J kg^-1 added");
+//					System.out.println(potentialEnergy + " J kg^-1 total");
+				} else {
+					return potentialEnergy;
+				}
+			}
+		}
+
+		return potentialEnergy;
+	}
+
+	/**
+	 * Computes SBCINH given an environmental sounding Assumes that all arrays are
+	 * sorted in order of increasing pressure.
+	 * 
+	 * @param envPressure    Units: array of Pascals
+	 * @param envTemperature Units: array of Kelvins
+	 * @param envDewpoint    Units: array of Kelvins
+	 * @return <b>potentialEnergy</b> Units: J kg^-1
+	 */
+	public static double computeSbcinh(double[] envPressure, double[] envTemperature, double[] envDewpoint) {
+		ArrayList<RecordAtLevel> parcelPath = computeParcelPath(envPressure, envTemperature, envDewpoint,
+				ParcelPath.SURFACE_BASED, false);
+
+		return computeCinh(envPressure, envTemperature, envDewpoint, parcelPath);
+	}
+
+	/**
+	 * Computes ML50CINH given an environmental sounding Assumes that all arrays are
+	 * sorted in order of increasing pressure.
+	 * 
+	 * @param envPressure    Units: array of Pascals
+	 * @param envTemperature Units: array of Kelvins
+	 * @param envDewpoint    Units: array of Kelvins
+	 * @return <b>potentialEnergy</b> Units: J kg^-1
+	 */
+	public static double computeMl50cinh(double[] envPressure, double[] envTemperature, double[] envDewpoint) {
+		ArrayList<RecordAtLevel> parcelPath = computeParcelPath(envPressure, envTemperature, envDewpoint,
+				ParcelPath.MIXED_LAYER_50MB, false);
+
+		return computeCinh(envPressure, envTemperature, envDewpoint, parcelPath);
+	}
+
+	/**
+	 * Computes ML100CINH given an environmental sounding Assumes that all arrays
+	 * are sorted in order of increasing pressure.
+	 * 
+	 * @param envPressure    Units: array of Pascals
+	 * @param envTemperature Units: array of Kelvins
+	 * @param envDewpoint    Units: array of Kelvins
+	 * @return <b>potentialEnergy</b> Units: J kg^-1
+	 */
+	public static double computeMl100cinh(double[] envPressure, double[] envTemperature, double[] envDewpoint) {
+		ArrayList<RecordAtLevel> parcelPath = computeParcelPath(envPressure, envTemperature, envDewpoint,
+				ParcelPath.MIXED_LAYER_100MB, false);
+
+		return computeCinh(envPressure, envTemperature, envDewpoint, parcelPath);
+	}
+
+	/**
+	 * Computes MLCINH given an environmental sounding Assumes that all arrays are
+	 * sorted in order of increasing pressure.
+	 * 
+	 * @param envPressure     Units: array of Pascals
+	 * @param envTemperature  Units: array of Kelvins
+	 * @param envDewpoint     Units: array of Kelvins
+	 * @param mixedLayerDepth Units: Pascals
+	 * @return <b>potentialEnergy</b> Units: J kg^-1
+	 */
+	public static double computeMlcinh(double[] envPressure, double[] envTemperature, double[] envDewpoint,
+			double mixedLayerDepth) {
+		ArrayList<RecordAtLevel> parcelPath = computeMixedLayerParcelPath(envPressure, envTemperature, envDewpoint,
+				mixedLayerDepth, false);
+
+		return computeCinh(envPressure, envTemperature, envDewpoint, parcelPath);
+	}
+
+	/**
+	 * Computes MUCINH given an environmental sounding Assumes that all arrays are
+	 * sorted in order of increasing pressure.
+	 * 
+	 * @param envPressure    Units: array of Pascals
+	 * @param envTemperature Units: array of Kelvins
+	 * @param envDewpoint    Units: array of Kelvins
+	 * @return <b>potentialEnergy</b> Units: J kg^-1
+	 */
+	public static double computeMucinh(double[] envPressure, double[] envTemperature, double[] envDewpoint) {
+		ArrayList<RecordAtLevel> parcelPath = computeParcelPath(envPressure, envTemperature, envDewpoint,
+				ParcelPath.MOST_UNSTABLE, false);
+
+		return computeCinh(envPressure, envTemperature, envDewpoint, parcelPath);
+	}
+
+	/**
+	 * Computes MUCINH given an environmental sounding Assumes that all arrays are
+	 * sorted in order of increasing pressure.
+	 * 
+	 * @param envPressure    Units: array of Pascals
+	 * @param envTemperature Units: array of Kelvins
+	 * @param envDewpoint    Units: array of Kelvins
+	 * @return <b>potentialEnergy</b> Units: J kg^-1
+	 */
+	public static double computeDcape(double[] envPressure, double[] envTemperature, double[] envDewpoint) {
+		ArrayList<RecordAtLevel> parcelPath = computeDcapeParcelPath(envPressure, envTemperature, envDewpoint);
+
+		double[] parcelPressure = new double[parcelPath.size()];
+		double[] parcelHeight = new double[parcelPath.size()];
+		double[] parcelTemperature = new double[parcelPath.size()];
+		double[] parcelDewpoint = new double[parcelPath.size()];
+
+		for (int i = 0; i < parcelPath.size(); i++) {
+			parcelPressure[i] = parcelPath.get(parcelPath.size() - 1 - i).pressure;
+			parcelHeight[i] = parcelPath.get(parcelPath.size() - 1 - i).height;
+			parcelTemperature[i] = parcelPath.get(parcelPath.size() - 1 - i).temperature;
+			parcelDewpoint[i] = parcelPath.get(parcelPath.size() - 1 - i).dewpoint;
+		}
+
+		double potentialEnergy = 0.0; // J kg^-1
+
+		for (int i = 0; i < parcelPressure.length - 1; i++) {
+			double pTemp = parcelTemperature[i];
+
+			double ePres = parcelPressure[i];
+			double eTemp = logInterp(envPressure, envTemperature, ePres);
+
+			double energyAdded = gravAccel * (eTemp - pTemp) / eTemp;
+
+			if (energyAdded > 0) {
+				double dz = parcelHeight[i + 1] - parcelHeight[i];
+
+				potentialEnergy += energyAdded * dz;
+			} else {
+				return potentialEnergy;
+			}
+		}
+
+		return potentialEnergy;
+	}
 
 	/**
 	 * Computes the convective parcel path. Entrainment cape not yet implemented
@@ -401,6 +821,8 @@ public class WeatherUtils {
 		ArrayList<RecordAtLevel> parcelPath = new ArrayList<>();
 
 		final double ITER_HEIGHT_CHANGE = 20; // change per iteration
+
+		double height = 0;
 
 		double parcelPressure = -1024.0;
 		double parcelTemperature = -1024.0;
@@ -440,12 +862,13 @@ public class WeatherUtils {
 		}
 
 		{
-			RecordAtLevel record = new RecordAtLevel(parcelPressure, parcelTemperature, parcelDewpoint, -1024.0);
+			RecordAtLevel record = new RecordAtLevel(parcelPressure, parcelTemperature, parcelDewpoint, height);
 			parcelPath.add(record);
 		}
 
 		while (parcelPressure > 10000) {
-			parcelPressure = WeatherUtils.pressureAtHeight(parcelPressure, ITER_HEIGHT_CHANGE);
+			parcelPressure = WeatherUtils.pressureAtHeight(parcelPressure, ITER_HEIGHT_CHANGE, parcelTemperature);
+			height += ITER_HEIGHT_CHANGE;
 
 			if (parcelDewpoint >= parcelTemperature) {
 				parcelTemperature -= WeatherUtils.moistAdiabaticLapseRate(parcelTemperature, parcelPressure)
@@ -456,7 +879,7 @@ public class WeatherUtils {
 				parcelDewpoint -= dewpointLapseRate * ITER_HEIGHT_CHANGE;
 			}
 
-			RecordAtLevel record = new RecordAtLevel(parcelPressure, parcelTemperature, parcelDewpoint, -1024.0);
+			RecordAtLevel record = new RecordAtLevel(parcelPressure, parcelTemperature, parcelDewpoint, height);
 			parcelPath.add(record);
 		}
 
@@ -464,8 +887,68 @@ public class WeatherUtils {
 	}
 
 	/**
-	 * Computes the mixed-layer convective parcel path. Entrainment cape not yet implemented
-	 * because I either haven't found or haven't read the study that derived it.
+	 * Computes the downdraft parcel path
+	 * 
+	 * 
+	 * @param pressure    Units: array of Pascals
+	 * @param temperature Units: array of Kelvins
+	 * @param dewpoint    Units: array of Kelvins
+	 * @return <b>parcelPath</b> RecordAtLevel {pressure: Pascals, temperature:
+	 *         Kelvins, wetbulb: Kelvins, dewpoint: Kelvins, height: Meters}
+	 */
+	public static ArrayList<RecordAtLevel> computeDcapeParcelPath(double[] pressure, double[] temperature,
+			double[] dewpoint) {
+		ArrayList<RecordAtLevel> parcelPath = new ArrayList<>();
+
+		final double ITER_HEIGHT_CHANGE = -20; // change per iteration
+
+		double height = 0;
+
+		double parcelPressure = -1024.0;
+		double parcelTemperature = -1024.0;
+
+		int minThetaEIndex = -1;
+		double minThetaEValue = 1024.0;
+
+		for (int i = 0; i < Double.min(Double.min(temperature.length, dewpoint.length), pressure.length); i++) {
+			if (pressure[i] > 50000) {
+				double thetaE = WeatherUtils.thetaE(temperature[i], dewpoint[i], pressure[i]);
+
+				if (thetaE < minThetaEValue) {
+					minThetaEIndex = i;
+					minThetaEValue = thetaE;
+				}
+			}
+		}
+
+		parcelPressure = pressure[minThetaEIndex];
+		parcelTemperature = WeatherUtils.wetBulbTemperature(temperature[minThetaEIndex], dewpoint[minThetaEIndex],
+				pressure[minThetaEIndex]);
+
+		{
+			RecordAtLevel record = new RecordAtLevel(parcelPressure, parcelTemperature, parcelTemperature, height);
+			parcelPath.add(record);
+		}
+
+		while (parcelPressure < pressure[pressure.length - 1]) {
+			parcelPressure = WeatherUtils.pressureAtHeight(parcelPressure, ITER_HEIGHT_CHANGE, parcelTemperature);
+
+			parcelTemperature -= WeatherUtils.moistAdiabaticLapseRate(parcelTemperature, parcelPressure)
+					* ITER_HEIGHT_CHANGE;
+
+			height += ITER_HEIGHT_CHANGE;
+
+			RecordAtLevel record = new RecordAtLevel(parcelPressure, parcelTemperature, parcelTemperature, height);
+			parcelPath.add(record);
+		}
+
+		return parcelPath;
+	}
+
+	/**
+	 * Computes the mixed-layer convective parcel path. Entrainment cape not yet
+	 * implemented because I either haven't found or haven't read the study that
+	 * derived it.
 	 * 
 	 * 
 	 * @param pressure        Units: array of Pascals
@@ -475,83 +958,87 @@ public class WeatherUtils {
 	 * @return <b>parcelPath</b> RecordAtLevel {pressure: Pascals, temperature:
 	 *         Kelvins, wetbulb: Kelvins, dewpoint: Kelvins, height: Meters}
 	 */
-	public static ArrayList<RecordAtLevel> computeMixedLayerParcelPath(double[] pressure, double[] temperature, double[] dewpoint,
-			double mixedLayerDepth, boolean doEntrainment) {
+	public static ArrayList<RecordAtLevel> computeMixedLayerParcelPath(double[] pressure, double[] temperature,
+			double[] dewpoint, double mixedLayerDepth, boolean doEntrainment) {
 		ArrayList<RecordAtLevel> parcelPath = new ArrayList<>();
 
 		final double ITER_HEIGHT_CHANGE = 20; // change per iteration
 
+		double height = 0;
+
 		double parcelPressure = -1024.0;
 		double parcelTemperature = -1024.0;
 		double parcelDewpoint = -1024.0;
-		
+
 		double[] potentialTemperature = new double[dewpoint.length];
 		double[] mixingRatio = new double[dewpoint.length];
-		
-		for(int i = 0; i < dewpoint.length; i++) {
+
+		for (int i = 0; i < dewpoint.length; i++) {
 			potentialTemperature[i] = WeatherUtils.potentialTemperature(temperature[i], pressure[i]);
 			mixingRatio[i] = WeatherUtils.mixingRatio(pressure[i], dewpoint[i]);
 		}
 
 		double topOfMixedLayer = pressure[pressure.length - 2] - mixedLayerDepth;
-		
+
 		// computes the starting mixed-layer parcel
 		double averageThetaSum = 0.0;
 		double averageMixingRatioSum = 0.0;
 		double weightSum = 0.0;
-		
-		for(int i = dewpoint.length - 1; i > 0; i--) {
+
+		for (int i = dewpoint.length - 1; i > 0; i--) {
 			double pressure1 = pressure[i];
 			double theta1 = potentialTemperature[i];
 			double mixingRatio1 = mixingRatio[i];
-			
+
 			double pressure2 = pressure[i - 1];
 			double theta2 = potentialTemperature[i - 1];
 			double mixingRatio2 = mixingRatio[i - 1];
-			
-			if(pressure2 > topOfMixedLayer) {
-				double weight = (pressure1 - pressure2)/100.0;
-				
+
+			if (pressure2 > topOfMixedLayer) {
+				double weight = (pressure1 - pressure2) / 100.0;
+
 				averageThetaSum += weight * (theta1 + theta2) / 2.0;
 				averageMixingRatioSum += weight * (mixingRatio1 + mixingRatio2) / 2.0;
 				weightSum += weight;
 			} else {
-				double weight = (pressure1 - topOfMixedLayer)/100.0;
-				
+				double weight = (pressure1 - topOfMixedLayer) / 100.0;
+
 				double thetaInterp = linearInterp(pressure, potentialTemperature, topOfMixedLayer);
 				double mixingRatioInterp = linearInterp(pressure, mixingRatio, topOfMixedLayer);
-				
+
 				double thetaAddend = weight * (theta1 + thetaInterp) / 2.0;
-				
+
 				averageThetaSum += thetaAddend;
 				averageMixingRatioSum += weight * (mixingRatio1 + mixingRatioInterp) / 2.0;
 				weightSum += weight;
 				break;
 			}
 		}
-		
+
 		double averageTheta = averageThetaSum / weightSum;
 		double averageMixingRatio = averageMixingRatioSum / weightSum;
-		
-		System.out.println("theta:\t" + (averageTheta) + " K");
-		System.out.println("w:\t" + averageMixingRatio + " g g^-1");
-		
+
+//		System.out.println("theta:\t" + (averageTheta) + " K");
+//		System.out.println("w:\t" + averageMixingRatio + " g g^-1");
+
 		parcelPressure = pressure[pressure.length - 1];
 		parcelTemperature = averageTheta / Math.pow(100000 / parcelPressure, 0.286);
-		double averageVaporPressure = (parcelPressure * averageMixingRatio)  / (0.62197 + averageMixingRatio);
-		parcelDewpoint = 1 / (1/273.15 - (waterVaporGasConstant/latentHeatOfVaporization * Math.log(averageVaporPressure/611)));
-		
-		System.out.println(parcelPressure/100.0 + " mb");
-		System.out.println(parcelTemperature - 273.15 + " C");
-		System.out.println(parcelDewpoint - 273.15 + " C");
-		
+		double averageVaporPressure = (parcelPressure * averageMixingRatio) / (0.62197 + averageMixingRatio);
+		parcelDewpoint = 1 / (1 / 273.15
+				- (waterVaporGasConstant / latentHeatOfVaporization * Math.log(averageVaporPressure / 611)));
+
+//		System.out.println(parcelPressure / 100.0 + " mb");
+//		System.out.println(parcelTemperature - 273.15 + " C");
+//		System.out.println(parcelDewpoint - 273.15 + " C");
+
 		{
-			RecordAtLevel record = new RecordAtLevel(parcelPressure, parcelTemperature, parcelDewpoint, -1024.0);
+			RecordAtLevel record = new RecordAtLevel(parcelPressure, parcelTemperature, parcelDewpoint, height);
 			parcelPath.add(record);
 		}
 
 		while (parcelPressure > 10000) {
-			parcelPressure = WeatherUtils.pressureAtHeight(parcelPressure, ITER_HEIGHT_CHANGE);
+			parcelPressure = WeatherUtils.pressureAtHeight(parcelPressure, ITER_HEIGHT_CHANGE, parcelTemperature);
+			height += ITER_HEIGHT_CHANGE;
 
 			if (parcelDewpoint >= parcelTemperature) {
 				parcelTemperature -= WeatherUtils.moistAdiabaticLapseRate(parcelTemperature, parcelPressure)
@@ -562,11 +1049,1454 @@ public class WeatherUtils {
 				parcelDewpoint -= dewpointLapseRate * ITER_HEIGHT_CHANGE;
 			}
 
-			RecordAtLevel record = new RecordAtLevel(parcelPressure, parcelTemperature, parcelDewpoint, -1024.0);
+			RecordAtLevel record = new RecordAtLevel(parcelPressure, parcelTemperature, parcelDewpoint, height);
 			parcelPath.add(record);
 		}
 
 		return parcelPath;
+	}
+
+	/**
+	 * Computes the convective available potential energy in the Assumes that all
+	 * arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param envPressure       Units: array of Pascals
+	 * @param envTemperature    Units: array of Kelvins
+	 * @param envDewpoint       Units: array of Kelvins
+	 * @param parcelPressure    Units: array of Pascals
+	 * @param parcelTemperature Units: array of Kelvins
+	 * @param parcelDewpoint    Units: array of Kelvins
+	 * @return <b>potentialEnergy</b> Units: J kg^-1
+	 */
+	public static double computeThreeCape(double[] envPressure, double[] envTemperature, double[] envDewpoint, ParcelPath pathType) {
+		ArrayList<RecordAtLevel> parcelPath = computeParcelPath(envPressure, envTemperature, envDewpoint,
+				pathType, false);
+
+		double[] parcelPressure = new double[parcelPath.size()];
+		double[] parcelHeight = new double[parcelPath.size()];
+		double[] parcelTemperature = new double[parcelPath.size()];
+		double[] parcelDewpoint = new double[parcelPath.size()];
+
+		for (int i = 0; i < parcelPath.size(); i++) {
+			parcelPressure[i] = parcelPath.get(parcelPath.size() - 1 - i).pressure;
+			parcelHeight[i] = parcelPath.get(parcelPath.size() - 1 - i).height;
+			parcelTemperature[i] = parcelPath.get(parcelPath.size() - 1 - i).temperature;
+			parcelDewpoint[i] = parcelPath.get(parcelPath.size() - 1 - i).dewpoint;
+		}
+
+		double potentialEnergy = 0.0; // J kg^-1
+
+		double surfacePressure = envPressure[envPressure.length - 1]; // Pascals
+
+		double equilibriumLevel = equilibriumLevel(envPressure, envTemperature, envDewpoint, parcelPressure,
+				parcelHeight, parcelTemperature, parcelDewpoint);
+		double levelOfFreeConvection = levelOfFreeConvection(envPressure, envTemperature, envDewpoint, parcelPressure,
+				parcelHeight, parcelTemperature, parcelDewpoint);
+
+		for (int i = 0; i < parcelPressure.length - 1; i++) {
+			double pPres = parcelPressure[i];
+			double height = parcelHeight[i];
+
+//			System.out.printf("%6.1f\t", height);
+//			System.out.printf("%6.1f\t", equilibriumLevel);
+
+			if (height < equilibriumLevel && height > levelOfFreeConvection && pPres >= envPressure[0]) {
+				double pTemp = parcelTemperature[i];
+				double pDwpt = parcelDewpoint[i];
+
+				double ePres = parcelPressure[i];
+				double eTemp = logInterp(envPressure, envTemperature, ePres);
+				double eDwpt = logInterp(envPressure, envDewpoint, ePres);
+
+				double eVirtTemp = virtualTemperature(eTemp, eDwpt, ePres);
+				double pVirtTemp = virtualTemperature(pTemp, pDwpt, pPres);
+
+				double energyAdded = gravAccel * (pVirtTemp - eVirtTemp) / eVirtTemp;
+//				System.out.println(dz);
+//				System.out.printf("%6.1f\t", ePres/100.0);
+//				System.out.print(energyAdded + " energyAdded\t");
+//				System.out.print((energyAdded > 0) + " energyAdded\t");
+
+				if (energyAdded > 0 && pDwpt >= pTemp) {
+					double dz = parcelHeight[i] - parcelHeight[i + 1];
+
+					if (parcelHeight[i] <= 3000) {
+						potentialEnergy += energyAdded * dz;
+
+//						System.out.printf("%7.1f\t%5.1f\t%5.1f\n", ePres / 100.0, eVirtTemp, pVirtTemp);
+//						System.out.println(height);
+//						System.out.println(energyAdded * dz + " J kg^-1 added");
+//						System.out.println(potentialEnergy + " J kg^-1 total");
+//						System.out.println();
+					}
+				} else {
+					return potentialEnergy;
+				}
+			}
+		}
+
+		return potentialEnergy;
+	}
+
+	/**
+	 * Computes the level of free convection given a parcel path. Assumes that all
+	 * arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param envPressure    Units: array of Pascals
+	 * @param envTemperature Units: array of Kelvins
+	 * @param envDewpoint    Units: array of Kelvins
+	 * @param parcelPath     Type: ArrayList of RecordAtLevel, should be type
+	 *                       returned by computeParcelPath()
+	 * @return <b>levelOfFreeConvection</b> Units: Meters
+	 */
+	public static double convectiveCondensationLevel(double[] envPressure, double[] envTemperature,
+			double[] envDewpoint, ArrayList<RecordAtLevel> parcelPath) {
+		double[] parcelPressure = new double[parcelPath.size()];
+		double[] parcelHeight = new double[parcelPath.size()];
+		double[] parcelTemperature = new double[parcelPath.size()];
+		double[] parcelDewpoint = new double[parcelPath.size()];
+
+		for (int i = 0; i < parcelPath.size(); i++) {
+			parcelPressure[i] = parcelPath.get(parcelPath.size() - 1 - i).pressure;
+			parcelHeight[i] = parcelPath.get(parcelPath.size() - 1 - i).height;
+			parcelTemperature[i] = parcelPath.get(parcelPath.size() - 1 - i).temperature;
+			parcelDewpoint[i] = parcelPath.get(parcelPath.size() - 1 - i).dewpoint;
+		}
+
+		return convectiveCondensationLevel(envPressure, envTemperature, envDewpoint, parcelPressure, parcelHeight,
+				parcelTemperature, parcelDewpoint);
+	}
+
+	/**
+	 * Computes the level of free convection given the environment and a parcel
+	 * path. Assumes that all arrays are sorted by increasing pressure.
+	 * 
+	 * @param envPressure       Units: Pascals
+	 * @param envTemperature    Units: Kelvins
+	 * @param envDewpoint       Units: Kelvins
+	 * @param parcelPressure    Units: Pascals
+	 * @param parcelTemperature Units: Kelvins
+	 * @param parcelDewpoint    Units: Kelvins
+	 * @return <b>levelOfFreeConvection</b> Units: Meters
+	 */
+	public static double convectiveCondensationLevel(double[] envPressure, double[] envTemperature,
+			double[] envDewpoint, double[] parcelPressure, double[] parcelHeight, double[] parcelTemperature,
+			double[] parcelDewpoint) {
+		double ccl = -1024.0; // meters
+
+		double surfaceDewpoint = parcelDewpoint[parcelDewpoint.length - 1];
+
+		for (int i = parcelPressure.length - 1; i >= 0; i--) {
+
+			double ePres = parcelPressure[i];
+			double eTemp = logInterp(envPressure, envTemperature, ePres);
+
+			double dewpointAtHeight = surfaceDewpoint - dewpointLapseRate * parcelHeight[i];
+
+			if (dewpointAtHeight >= eTemp) {
+				return parcelHeight[i];
+			}
+		}
+
+		return ccl;
+	}
+
+	/**
+	 * Computes the deviant tornado motion vector according to <a href =
+	 * 'https://cameronnixonphotography.wordpress.com/research/anticipating-deviant-tornado-motion/'>Dr.
+	 * Cameron Nixon's method</a>.
+	 * 
+	 * Assumes all arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param pressure Units: array of Pascals
+	 * @param uWind    Units: array of m s^-1
+	 * @param vWind    Units: array of m s^-1
+	 * @return <b>devTorMotion</b> Units: array of m s^-1, first entry: uWind,
+	 *         second entry: vWind
+	 */
+	public static double[] deviantTornadoMotion(double[] pressure, double[] height, double[] uWind, double[] vWind) {
+		double[] stormMotion = stormMotionBunkersIDRightMoving(pressure, uWind, vWind);
+		
+		return deviantTornadoMotion(pressure, height, uWind, vWind, stormMotion);
+	}
+
+	/**
+	 * Computes the deviant tornado motion vector according to <a href =
+	 * 'https://cameronnixonphotography.wordpress.com/research/anticipating-deviant-tornado-motion/'>Dr.
+	 * Cameron Nixon's method</a>.
+	 * 
+	 * Assumes all arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param pressure Units: array of Pascals
+	 * @param uWind    Units: array of m s^-1
+	 * @param vWind    Units: array of m s^-1
+	 * @return <b>devTorMotion</b> Units: array of m s^-1, first entry: uWind,
+	 *         second entry: vWind
+	 */
+	public static double[] deviantTornadoMotion(double[] pressure, double[] height, double[] uWind, double[] vWind, double[] stormMotion) {
+		double[] devTorMotion = new double[2];
+
+		double[] heightRev = new double[vWind.length];
+		double[] uWindRev = new double[vWind.length];
+		double[] vWindRev = new double[vWind.length];
+		for (int i = 0; i < heightRev.length; i++) {
+			heightRev[heightRev.length - 1 - i] = height[i];
+			uWindRev[heightRev.length - 1 - i] = uWind[i];
+			vWindRev[heightRev.length - 1 - i] = vWind[i];
+		}
+
+		double uWindSum = 0.0;
+		double vWindSum = 0.0;
+		double weightSum = 0.0;
+
+		for (int i = uWind.length - 1; i >= 1; i--) {
+			double uWind1 = uWind[i]; // m s^-1
+			double vWind1 = vWind[i]; // m s^-1
+			double height1 = height[i] - height[height.length - 1]; // meters AGL
+//			System.out.println("0-500 MW summing at: " + (height[i] - height[height.length - 1]) + " m");
+
+			double uWind2 = uWind[i - 1]; // m s^-1
+			double vWind2 = vWind[i - 1]; // m s^-1
+			double height2 = height[i - 1] - height[height.length - 1]; // meters AGL
+
+			if (height2 < 500) {
+				height2 = 500;
+				uWind2 = linearInterp(heightRev, uWindRev, 500 + height[height.length - 1]);
+				vWind2 = linearInterp(heightRev, vWindRev, 500 + height[height.length - 1]);
+			}
+
+			double weight = (height2 - height1) / 100.0;
+
+			uWindSum += weight * (uWind1 + uWind2) / 2.0;
+			vWindSum += weight * (vWind1 + vWind2) / 2.0;
+			weightSum += weight;
+
+			if (height[i - 1] > 500) {
+				break;
+			}
+		}
+		
+//		System.out.println(uWindSum);
+//		System.out.println(vWindSum);
+
+		double meanUWind0_500m = uWindSum / weightSum;
+		double meanVWind0_500m = vWindSum / weightSum;
+
+//		System.out.println(meanUWind0_500m);
+//		System.out.println(meanVWind0_500m);
+		
+		devTorMotion[0] = (stormMotion[0] + meanUWind0_500m) / 2.0;
+		devTorMotion[1] = (stormMotion[1] + meanVWind0_500m) / 2.0;
+
+		return devTorMotion;
+	}
+
+	/**
+	 * Computes the effective bulk wind difference given an environmental sounding.
+	 * 
+	 * Reference: https://www.spc.noaa.gov/exper/mesoanalysis/help/help_eshr.html
+	 * 
+	 * @param envPressure    Units: array of Pascals
+	 * @param envTemperature Units: array of Kelvins
+	 * @param envDewpoint    Units: array of Kelvins
+	 * @param uWind          Units: array of m s^-1
+	 * @param vWind          Units: array of m s^-1
+	 * @return <b>effectiveBulkWindDifference</b> Units: array of m s^-1, first
+	 *         entry: u component, second entry: v component
+	 */
+	public static double[] effectiveBulkWindDifference(double[] envPressure, double[] envHeight, double[] envTemperature,
+			double[] envDewpoint, double[] uWind, double[] vWind) {
+		double[] inflowLayer = effectiveInflowLayer(envPressure, envHeight, envTemperature, envDewpoint);
+
+		if (inflowLayer[0] == -1024)
+			return new double[] { 0.0, 0.0 };
+
+		ArrayList<RecordAtLevel> muParcel = computeParcelPath(envPressure, envTemperature, envDewpoint,
+				ParcelPath.MOST_UNSTABLE, false);
+		double muEl = equilibriumLevel(envPressure, envTemperature, envDewpoint, muParcel);
+
+		double lowerPressure = WeatherUtils.pressureAtHeight(envPressure[envPressure.length - 1], inflowLayer[0]);
+		double upperPressure = WeatherUtils.pressureAtHeight(envPressure[envPressure.length - 1], muEl / 2.0);
+
+		double uWindLower = logInterp(envPressure, uWind, lowerPressure);
+		double vWindLower = logInterp(envPressure, vWind, lowerPressure);
+
+		double uWindUpper = logInterp(envPressure, uWind, upperPressure);
+		double vWindUpper = logInterp(envPressure, vWind, upperPressure);
+
+		return new double[] { uWindUpper - uWindLower, vWindUpper - vWindLower };
+	}
+
+	/**
+	 * Computes the effective inflow layer given an environmental sounding.
+	 * 
+	 * Reference: https://www.spc.noaa.gov/exper/soundings/help/effective.html
+	 * 
+	 * @param envPressure    Units: array of Pascals
+	 * @param envTemperature Units: array of Kelvins
+	 * @param envDewpoint    Units: array of Kelvins
+	 * @return <b>inflowLayer</b> Units: array of Meters, first entry: lower limit,
+	 *         second entry: upper limit
+	 */
+	public static double[] effectiveInflowLayer(double[] envPressure, double[] envHeight, double[] envTemperature, double[] envDewpoint) {
+		double[] inflowLayer = new double[2];
+
+		double mucape = computeMucape(envPressure, envTemperature, envDewpoint); // J kg^-1
+		double mucinh = computeMucinh(envPressure, envTemperature, envDewpoint); // J kg^-1
+
+		double surfacePressure = envPressure[envPressure.length - 1]; // Pascals
+
+//		System.out.println("WeatherUtils::effectiveInflowLayer() - MUCAPE " + (int) (mucape) + " J kg^-1");
+//		System.out.println("WeatherUtils::effectiveInflowLayer() - MUCINH " + (int) (mucinh) + " J kg^-1");
+
+		// checking to make sure there is enough CAPE to create an inflow layer
+		if (mucape <= 100 || mucinh <= -250) {
+			inflowLayer[0] = -1024.0;
+			inflowLayer[1] = -1024.0;
+
+			return inflowLayer;
+		} else {
+			boolean foundBottomOfLayer = false;
+
+			for (int i = envDewpoint.length - 1; i >= 1; i--) {
+				double[] truncEnvPressure = truncateArray(envPressure, i + 1);
+				double[] truncEnvHeight = truncateArray(envHeight, i + 1);
+				double[] truncEnvTemperature = truncateArray(envTemperature, i + 1);
+				double[] truncEnvDewpoint = truncateArray(envDewpoint, i + 1);
+
+//				System.out.println("WeatherUtils::effectiveInflowLayer() - doing CAPE at " + truncEnvPressure[truncEnvPressure.length - 1]/100.0 + " mb");
+
+				// a little messy but should get the job done right with low effort
+				double capeAtLevel = computeSbcape(truncEnvPressure, truncEnvTemperature, truncEnvDewpoint);
+				double cinhAtLevel = computeSbcinh(truncEnvPressure, truncEnvTemperature, truncEnvDewpoint);
+
+//				System.out.printf("%4d\t%4d\t", (int) capeAtLevel, (int) cinhAtLevel);
+//				System.out.println(foundBottomOfLayer);
+
+				if (capeAtLevel > 100 && cinhAtLevel > -250) {
+					if (!foundBottomOfLayer) {
+						double hgtAtLayer = truncEnvHeight[truncEnvHeight.length - 1] - envHeight[envHeight.length - 1];
+
+						inflowLayer[0] = hgtAtLayer;
+
+						foundBottomOfLayer = true;
+					}
+				} else {
+					if (!foundBottomOfLayer) {
+						continue;
+					} else {
+						double hgtAtLayer = truncEnvHeight[truncEnvHeight.length - 1] - envHeight[envHeight.length - 1];
+
+						inflowLayer[1] = hgtAtLayer;
+
+						return inflowLayer;
+					}
+				}
+			}
+
+			// statement should never be reached, is present so code will compile
+			return inflowLayer;
+		}
+	}
+
+	/**
+	 * Computes the equilibrium given a parcel path. Assumes that all arrays are
+	 * sorted in order of increasing pressure.
+	 * 
+	 * @param envPressure    Units: array of Pascals
+	 * @param envTemperature Units: array of Kelvins
+	 * @param envDewpoint    Units: array of Kelvins
+	 * @param parcelPath     Type: ArrayList of RecordAtLevel, should be type
+	 *                       returned by computeParcelPath()
+	 * @return <b>liftedCondensationLevel</b> Units: Meters
+	 */
+	public static double equilibriumLevel(double[] envPressure, double[] envTemperature, double[] envDewpoint,
+			ArrayList<RecordAtLevel> parcelPath) {
+		double[] parcelPressure = new double[parcelPath.size()];
+		double[] parcelHeight = new double[parcelPath.size()];
+		double[] parcelTemperature = new double[parcelPath.size()];
+		double[] parcelDewpoint = new double[parcelPath.size()];
+
+		for (int i = 0; i < parcelPath.size(); i++) {
+			parcelPressure[i] = parcelPath.get(parcelPath.size() - 1 - i).pressure;
+			parcelHeight[i] = parcelPath.get(parcelPath.size() - 1 - i).height;
+			parcelTemperature[i] = parcelPath.get(parcelPath.size() - 1 - i).temperature;
+			parcelDewpoint[i] = parcelPath.get(parcelPath.size() - 1 - i).dewpoint;
+		}
+
+		return equilibriumLevel(envPressure, envTemperature, envDewpoint, parcelPressure, parcelHeight,
+				parcelTemperature, parcelDewpoint);
+	}
+
+	/**
+	 * Computes the equilibrium level given the environment and a parcel path.
+	 * Assumes that all arrays are sorted by increasing pressure.
+	 * 
+	 * @param envPressure       Units: Pascals
+	 * @param envTemperature    Units: Kelvins
+	 * @param envDewpoint       Units: Kelvins
+	 * @param parcelPressure    Units: Pascals
+	 * @param parcelTemperature Units: Kelvins
+	 * @param parcelDewpoint    Units: Kelvins
+	 * @return <b>liftedCondensationLevel</b> Units: Meters
+	 */
+	public static double equilibriumLevel(double[] envPressure, double[] envTemperature, double[] envDewpoint,
+			double[] parcelPressure, double[] parcelHeight, double[] parcelTemperature, double[] parcelDewpoint) {
+		double el = -1024.0; // meters
+
+		for (int i = 0; i < parcelPressure.length; i++) {
+			double pPres = parcelPressure[i];
+			double pTemp = parcelTemperature[i];
+			double pDwpt = parcelDewpoint[i];
+
+			double ePres = parcelPressure[i];
+			double eTemp = logInterp(envPressure, envTemperature, ePres);
+			double eDwpt = logInterp(envPressure, envDewpoint, ePres);
+
+			double eVirtTemp = virtualTemperature(eTemp, eDwpt, ePres);
+			double pVirtTemp = virtualTemperature(pTemp, pDwpt, pPres);
+
+//			System.out.printf("%7.1f\t%5.1f\t%5.1f\n", ePres/100.0, eVirtTemp, pVirtTemp);
+
+			if (pVirtTemp >= eVirtTemp) {
+//				System.out.println(ePres + " Pa");
+				return parcelHeight[i];
+			}
+		}
+
+		return el;
+	}
+
+	/**
+	 * Computes the level of free convection given a parcel path. Assumes that all
+	 * arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param envPressure    Units: array of Pascals
+	 * @param envTemperature Units: array of Kelvins
+	 * @param envDewpoint    Units: array of Kelvins
+	 * @param parcelPath     Type: ArrayList of RecordAtLevel, should be type
+	 *                       returned by computeParcelPath()
+	 * @return <b>levelOfFreeConvection</b> Units: Meters
+	 */
+	public static double levelOfFreeConvection(double[] envPressure, double[] envTemperature, double[] envDewpoint,
+			ArrayList<RecordAtLevel> parcelPath) {
+		double[] parcelPressure = new double[parcelPath.size()];
+		double[] parcelHeight = new double[parcelPath.size()];
+		double[] parcelTemperature = new double[parcelPath.size()];
+		double[] parcelDewpoint = new double[parcelPath.size()];
+
+		for (int i = 0; i < parcelPath.size(); i++) {
+			parcelPressure[i] = parcelPath.get(parcelPath.size() - 1 - i).pressure;
+			parcelHeight[i] = parcelPath.get(parcelPath.size() - 1 - i).height;
+			parcelTemperature[i] = parcelPath.get(parcelPath.size() - 1 - i).temperature;
+			parcelDewpoint[i] = parcelPath.get(parcelPath.size() - 1 - i).dewpoint;
+		}
+
+		return levelOfFreeConvection(envPressure, envTemperature, envDewpoint, parcelPressure, parcelHeight,
+				parcelTemperature, parcelDewpoint);
+	}
+
+	/**
+	 * Computes the level of free convection given the environment and a parcel
+	 * path. Assumes that all arrays are sorted by increasing pressure.
+	 * 
+	 * @param envPressure       Units: Pascals
+	 * @param envTemperature    Units: Kelvins
+	 * @param envDewpoint       Units: Kelvins
+	 * @param parcelPressure    Units: Pascals
+	 * @param parcelTemperature Units: Kelvins
+	 * @param parcelDewpoint    Units: Kelvins
+	 * @return <b>levelOfFreeConvection</b> Units: Meters
+	 */
+	public static double levelOfFreeConvection(double[] envPressure, double[] envTemperature, double[] envDewpoint,
+			double[] parcelPressure, double[] parcelHeight, double[] parcelTemperature, double[] parcelDewpoint) {
+		double lfc = 0.0; // meters
+		double el = equilibriumLevel(envPressure, envTemperature, envDewpoint, parcelPressure, parcelHeight,
+				parcelTemperature, parcelDewpoint);
+
+		for (int i = 0; i < parcelPressure.length; i++) {
+			double pPres = parcelPressure[i];
+			double height = heightAtPressure(envPressure[envPressure.length - 1], pPres);
+
+			if (height < el) {
+				double pTemp = parcelTemperature[i];
+				double pDwpt = parcelDewpoint[i];
+
+				double ePres = parcelPressure[i];
+				double eTemp = logInterp(envPressure, envTemperature, ePres);
+				double eDwpt = logInterp(envPressure, envDewpoint, ePres);
+
+				double eVirtTemp = virtualTemperature(eTemp, eDwpt, ePres);
+				double pVirtTemp = virtualTemperature(pTemp, pDwpt, pPres);
+
+//				System.out.printf("%7.1f\t%5.1f\t%5.1f\n", ePres/100.0, eVirtTemp, pVirtTemp);
+
+				if (pVirtTemp <= eVirtTemp) {
+//					System.out.println(ePres + " Pa");
+//					System.out.println(parcelHeight[i] + " m");
+					return parcelHeight[i];
+				}
+			}
+		}
+
+		return lfc;
+	}
+
+	/**
+	 * Computes the level of free convection given a parcel path. Assumes that all
+	 * arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param surfacePressure Units: Pascals
+	 * @param parcelPath      Type: ArrayList of RecordAtLevel, should be type
+	 *                        returned by computeParcelPath()
+	 * @return <b>liftedCondensationLevel</b> Units: Meters
+	 */
+	public static double liftedCondensationLevel(double surfacePressure, ArrayList<RecordAtLevel> parcelPath) {
+		double[] parcelPressure = new double[parcelPath.size()];
+		double[] parcelHeight = new double[parcelPath.size()];
+		double[] parcelTemperature = new double[parcelPath.size()];
+		double[] parcelDewpoint = new double[parcelPath.size()];
+
+		for (int i = 0; i < parcelPath.size(); i++) {
+			parcelPressure[i] = parcelPath.get(parcelPath.size() - 1 - i).pressure;
+			parcelHeight[i] = parcelPath.get(parcelPath.size() - 1 - i).height;
+			parcelTemperature[i] = parcelPath.get(parcelPath.size() - 1 - i).temperature;
+			parcelDewpoint[i] = parcelPath.get(parcelPath.size() - 1 - i).dewpoint;
+		}
+
+		return liftedCondensationLevel(surfacePressure, parcelPressure, parcelHeight, parcelTemperature,
+				parcelDewpoint);
+	}
+
+	/**
+	 * Computes the height above the surface at which the air in a parcel condenses.
+	 * Assumes that all arrays are sorted by increasing pressure.
+	 * 
+	 * @param surfacePressure   Units: Pascals
+	 * @param parcelPressure    Units: Pascals
+	 * @param parcelTemperature Units: Kelvins
+	 * @param parcelDewpoint    Units: Kelvins
+	 * @return <b>liftedCondensationLevel</b> Units: Meters
+	 */
+	public static double liftedCondensationLevel(double surfacePressure, double[] parcelPressure, double[] parcelHeight,
+			double[] parcelTemperature, double[] parcelDewpoint) {
+		double lcl = -1024.0; // meters
+
+		for (int i = parcelPressure.length - 1; i >= 0; i--) {
+//			System.out.printf("%6.1f\t%6.1f\t%5.1f\t%5.1f\n", parcelHeight[i], parcelPressure[i], parcelTemperature[i], parcelDewpoint[i]);
+			if (parcelDewpoint[i] >= parcelTemperature[i]) {
+//				System.out.println("LCL:\t" + parcelHeight[i]);
+				return parcelHeight[i];
+			}
+		}
+
+		return lcl;
+	}
+
+	/**
+	 * Moist Adiabatic Lapse Rate intended for use in computing parcel paths. Found
+	 * it in my old code, actually no clue how it works and only a faint idea where
+	 * I got it.
+	 * 
+	 * @param temperature Units: Kelvins
+	 * @param pressure    Units: Pascals
+	 * @return <b>moistAdiabaticLapseRate</b> Units: K m^-1
+	 */
+	public static double moistAdiabaticLapseRate(double temperature, double pressure) {
+		double mixingRatio = mixingRatio(pressure, temperature);
+
+		double lapseRate = 9.81 * (1 + ((2501000 * mixingRatio) / (287 * temperature)))
+				/ (1003.5 + 10000 * ((250100 * 2501 * mixingRatio) / (461.5 * temperature * temperature)));
+
+		return lapseRate;
+	}
+
+	/**
+	 * Computes the storm motion according to <a href=
+	 * 'https://doi.org/10.1175/1520-0434(2000)015<0061:PSMUAN>2.0.CO;2'>Bunkers et.
+	 * al. 2000</a>. Mean wind component.
+	 * 
+	 * Assumes all arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param pressure Units: array of Pascals
+	 * @param uWind    Units: array of m s^-1
+	 * @param vWind    Units: array of m s^-1
+	 * @return <b>stormMotion</b> Units: array of m s^-1, first entry: uWind, second
+	 *         entry: vWind
+	 */
+	public static double[] stormMotionBunkersIDMeanWindComponent(double[] pressure, double[] uWind, double[] vWind) {
+		double[] stormMotion = new double[2];
+
+		double uWindSum = 0.0;
+		double vWindSum = 0.0;
+		double weightSum = 0.0;
+
+		double surfacePressure = pressure[pressure.length - 1];
+		double pressureAt6km = pressureAtHeight(surfacePressure, 6000);
+
+		for (int i = uWind.length - 1; i >= 1; i--) {
+			double uWind1 = uWind[i]; // m s^-1
+			double vWind1 = vWind[i]; // m s^-1
+			double height1 = heightAtPressure(surfacePressure, pressure[i]); // meters
+
+			double uWind2 = uWind[i - 1]; // m s^-1
+			double vWind2 = vWind[i - 1]; // m s^-1
+			double height2 = heightAtPressure(surfacePressure, pressure[i - 1]); // meters
+
+			if (pressure[i - 1] < pressureAt6km) {
+				height2 = 6000;
+				uWind2 = logInterp(pressure, uWind, pressureAt6km);
+				vWind2 = logInterp(pressure, vWind, pressureAt6km);
+			}
+
+			double weight = (height2 - height1) / 100.0;
+
+			uWindSum += weight * (uWind1 + uWind2) / 2.0;
+			vWindSum += weight * (vWind1 + vWind2) / 2.0;
+			weightSum += weight;
+
+//			System.out.println("uWindSum:\t" + uWindSum);
+//			System.out.println("vWindSum:\t" + vWindSum);
+
+			if (pressure[i - 1] < pressureAt6km) {
+				break;
+			}
+		}
+
+		stormMotion[0] = uWindSum / weightSum;
+		stormMotion[1] = vWindSum / weightSum;
+
+//		System.out.println("storm motion mw: " + Arrays.toString(stormMotion));
+
+		return stormMotion;
+	}
+
+	/**
+	 * Computes the storm motion according to <a href=
+	 * 'https://doi.org/10.1175/1520-0434(2000)015<0061:PSMUAN>2.0.CO;2'>Bunkers et.
+	 * al. 2000</a>. Deviation component. Added to right-movers, subtracted from
+	 * left-movers.
+	 * 
+	 * Assumes all arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param pressure Units: array of Pascals
+	 * @param uWind    Units: array of m s^-1
+	 * @param vWind    Units: array of m s^-1
+	 * @return <b>stormMotion</b> Units: array of m s^-1, first entry: uWind, second
+	 *         entry: vWind
+	 */
+	public static double[] stormMotionBunkersIDDeviationComponent(double[] pressure, double[] uWind, double[] vWind) {
+		double[] stormMotionDev = new double[2];
+
+		double surfacePressure = pressure[pressure.length - 1];
+		double pressureAt0_5km = pressureAtHeight(surfacePressure, 500);
+		double pressureAt5_5km = pressureAtHeight(surfacePressure, 5500);
+		double pressureAt6km = pressureAtHeight(surfacePressure, 6000);
+
+		double uWind0km = uWind[uWind.length - 1];
+		double vWind0km = vWind[vWind.length - 1];
+
+		double uWind0_5km = logInterp(pressure, uWind, pressureAt0_5km);
+		double vWind0_5km = logInterp(pressure, vWind, pressureAt0_5km);
+
+		double uWind5_5km = logInterp(pressure, uWind, pressureAt5_5km);
+		double vWind5_5km = logInterp(pressure, vWind, pressureAt5_5km);
+
+		double uWind6km = logInterp(pressure, uWind, pressureAt6km);
+		double vWind6km = logInterp(pressure, vWind, pressureAt6km);
+
+		double uWindHead = (uWind5_5km + uWind6km) / 2.0;
+		double vWindHead = (vWind5_5km + vWind6km) / 2.0;
+
+		double uWindTail = (uWind0km + uWind0_5km) / 2.0;
+		double vWindTail = (vWind0km + vWind0_5km) / 2.0;
+
+		double uBulkShear = uWindHead - uWindTail;
+		double vBulkShear = vWindHead - vWindTail;
+
+//		System.out.println("bulk shear 0-6 km: " + uBulkShear + "\t" + vBulkShear);
+
+		double uBulkShearRot = vBulkShear;
+		double vBulkShearRot = -uBulkShear;
+
+		double bulkShearMag = Math.hypot(uBulkShearRot, vBulkShearRot);
+
+		uBulkShearRot /= bulkShearMag;
+		vBulkShearRot /= bulkShearMag;
+
+		final double DEVIATION_MAGNITUDE = 7.5; // m s^-1
+
+		stormMotionDev[0] = DEVIATION_MAGNITUDE * uBulkShearRot;
+		stormMotionDev[1] = DEVIATION_MAGNITUDE * vBulkShearRot;
+
+//		System.out.println("storm motion dev: " + Arrays.toString(stormMotionDev));
+
+		return stormMotionDev;
+	}
+
+	/**
+	 * Computes the storm motion according to <a href=
+	 * 'https://doi.org/10.1175/1520-0434(2000)015<0061:PSMUAN>2.0.CO;2'>Bunkers et.
+	 * al. 2000</a>. For left-movers.
+	 * 
+	 * Assumes all arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param pressure Units: array of Pascals
+	 * @param uWind    Units: array of m s^-1
+	 * @param vWind    Units: array of m s^-1
+	 * @return <b>stormMotion</b> Units: array of m s^-1, first entry: uWind, second
+	 *         entry: vWind
+	 */
+	public static double[] stormMotionBunkersIDLeftMoving(double[] pressure, double[] uWind, double[] vWind) {
+		double[] stormMotionMw = stormMotionBunkersIDMeanWindComponent(pressure, uWind, vWind);
+		double[] stormMotionDev = stormMotionBunkersIDDeviationComponent(pressure, uWind, vWind);
+
+		double[] stormMotion = { stormMotionMw[0] - stormMotionDev[0], stormMotionMw[1] - stormMotionDev[1] };
+
+//		System.out.println("storm motion left: " + Arrays.toString(stormMotion));
+
+		return stormMotion;
+	}
+
+	/**
+	 * Computes the storm motion according to <a href=
+	 * 'https://doi.org/10.1175/1520-0434(2000)015<0061:PSMUAN>2.0.CO;2'>Bunkers et.
+	 * al. 2000</a>. For right-movers.
+	 * 
+	 * Assumes all arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param pressure Units: array of Pascals
+	 * @param uWind    Units: array of m s^-1
+	 * @param vWind    Units: array of m s^-1
+	 * @return <b>stormMotion</b> Units: array of m s^-1, first entry: uWind, second
+	 *         entry: vWind
+	 */
+	public static double[] stormMotionBunkersIDRightMoving(double[] pressure, double[] uWind, double[] vWind) {
+		double[] stormMotionMw = stormMotionBunkersIDMeanWindComponent(pressure, uWind, vWind);
+		double[] stormMotionDev = stormMotionBunkersIDDeviationComponent(pressure, uWind, vWind);
+
+		double[] stormMotion = { stormMotionMw[0] + stormMotionDev[0], stormMotionMw[1] + stormMotionDev[1] };
+
+//		System.out.println("storm motion right: " + Arrays.toString(stormMotion));
+
+		return stormMotion;
+	}
+
+	/**
+	 * Computes the storm relative helicity using the method of taking the area
+	 * between the hodograph, the storm motion vector, the lower limit SR wind
+	 * vector, and the upper limit SR wind vector.
+	 * 
+	 * Method detailed on
+	 * https://cameronnixonphotography.wordpress.com/research/the-storm-relative-hodograph/
+	 * CTRL+F -> "Storm-Relative Helicity"
+	 * 
+	 * Assumes all arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param pressure    Units: array of Pascals
+	 * @param uWind       Units: array of m s^-1
+	 * @param vWind       Units: array of m s^-1
+	 * @param stormMotion Units: array of m s^-1 {first: uWind, second: vWind}
+	 * @param lowerLimit  Units: Meters
+	 * @param upperLimit  Units: Meters
+	 * @return <b>stormRelativeHelicity</b> Units: m^2 s^-2
+	 */
+	public static double stormRelativeHelicityLegacy(double[] pressure, double[] uWind, double[] vWind,
+			double[] stormMotion, double lowerLimit, double upperLimit) {
+		double stormRelativeHelicity = 0.0; // m^2 s^-2
+
+		double lowerPressure = WeatherUtils.pressureAtHeight(pressure[pressure.length - 1], lowerLimit);
+		double upperPressure = WeatherUtils.pressureAtHeight(pressure[pressure.length - 1], upperLimit);
+
+		for (int i = 0; i < uWind.length - 1; i++) {
+			double pressure1 = pressure[i];
+			double uWind1 = uWind[i];
+			double vWind1 = vWind[i];
+
+			double pressure2 = pressure[i + 1];
+			double uWind2 = uWind[i + 1];
+			double vWind2 = vWind[i + 1];
+
+			double height1 = heightAtPressure(pressure[pressure.length - 1], pressure1);
+			double height2 = heightAtPressure(pressure[pressure.length - 1], pressure2);
+
+			if (height1 <= lowerLimit || height2 >= upperLimit) {
+				continue;
+			} else {
+				if (upperLimit < height1 && upperLimit > height2) {
+					uWind1 = logInterp(pressure, uWind, upperPressure);
+					vWind1 = logInterp(pressure, vWind, upperPressure);
+				}
+
+				if (lowerLimit < height1 && lowerLimit > height2) {
+					uWind2 = logInterp(pressure, uWind, lowerPressure);
+					vWind2 = logInterp(pressure, vWind, lowerPressure);
+				}
+
+				double[] x = { stormMotion[0], uWind1, uWind2 };
+				double[] y = { stormMotion[1], vWind1, vWind2 };
+
+//				System.out.printf("storm motion: %4.1f\t%4.1f\n", x[0], y[0]);
+//				System.out.printf("upper wind:   %4.1f\t%4.1f\n", x[1], y[1]);
+//				System.out.printf("lower wind:   %4.1f\t%4.1f\n", x[2], y[2]);
+//
+//				System.out.println("lowerLimit: " + lowerLimit);
+//				System.out.println("upperLimit: " + upperLimit);
+//				System.out.println("height1: " + height1);
+//				System.out.println("height2: " + height2);
+//				System.out.println("triangle: " + triangleArea(x, y));
+//				System.out.println("srh-b: \t" + stormRelativeHelicity);
+				stormRelativeHelicity += 1.835 * triangleArea(x, y);
+//				System.out.println("srh-a: \t" + stormRelativeHelicity);
+//				System.out.println();
+			}
+		}
+
+		return stormRelativeHelicity;
+	}
+
+	/**
+	 * Computes the storm relative helicity given a storm motion vector.
+	 * 
+	 * Assumes all arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param pressure    Units: array of Pascals
+	 * @param uWind       Units: array of m s^-1
+	 * @param vWind       Units: array of m s^-1
+	 * @param stormMotion Units: array of m s^-1 {first: uWind, second: vWind}
+	 * @param lowerLimit  Units: Meters
+	 * @param upperLimit  Units: Meters
+	 * @return <b>stormRelativeHelicity</b> Units: m^2 s^-2
+	 */
+	public static double stormRelativeHelicity(double[] pressure, double height[], double[] uWind, double[] vWind,
+			double[] stormMotion, double lowerLimit, double upperLimit) {
+		double stormRelativeHelicity = 0.0; // m^2 s^-2
+
+		final double ITER_HEIGHT_CHANGE = 20; // change per iteration
+
+		double[] heightRev = new double[vWind.length];
+		double[] uWindRev = new double[vWind.length];
+		double[] vWindRev = new double[vWind.length];
+		for (int i = 0; i < heightRev.length; i++) {
+			heightRev[heightRev.length - 1 - i] = height[i];
+			uWindRev[heightRev.length - 1 - i] = uWind[i];
+			vWindRev[heightRev.length - 1 - i] = vWind[i];
+		}
+
+		double zSurface = heightRev[0];
+
+		for (double z = lowerLimit; z < upperLimit; z += ITER_HEIGHT_CHANGE) {
+			double uWindAtLevel = linearInterp(heightRev, uWindRev, z + zSurface);
+			double vWindAtLevel = linearInterp(heightRev, vWindRev, z + zSurface);
+
+			double uWindAtLevelAbove = linearInterp(heightRev, uWindRev, z + zSurface + ITER_HEIGHT_CHANGE);
+			double vWindAtLevelAbove = linearInterp(heightRev, vWindRev, z + zSurface + ITER_HEIGHT_CHANGE);
+
+			double uWindSR = uWindAtLevel - stormMotion[0];
+			double vWindSR = vWindAtLevel - stormMotion[1];
+
+			double horizontalVorticityU = -(vWindAtLevelAbove - vWindAtLevel) / ITER_HEIGHT_CHANGE;
+			double horizontalVorticityV = (uWindAtLevelAbove - uWindAtLevel) / ITER_HEIGHT_CHANGE;
+
+			double integrand = uWindSR * horizontalVorticityU + vWindSR * horizontalVorticityV;
+
+			stormRelativeHelicity += integrand * ITER_HEIGHT_CHANGE;
+
+//			System.out.println(z);
+//			System.out.printf("%4.1f\t%4.1f\n", uWindSR, vWindSR);
+//			System.out.printf("%5.3f\t%5.3f\n", horizontalVorticityU, horizontalVorticityV);
+//			System.out.println(integrand + " m s^-2");
+//			System.out.println(stormRelativeHelicity + " m^2 s^-2");
+//			System.out.println();
+		}
+
+		return stormRelativeHelicity;
+	}
+
+	/**
+	 * Computes the storm relative mean wind in a given layer
+	 * 
+	 * Assumes all arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param pressure    Units: array of Pascals
+	 * @param uWind       Units: array of m s^-1
+	 * @param vWind       Units: array of m s^-1
+	 * @param stormMotion Units: array of m s^-1 {first: uWind, second: vWind}
+	 * @param lowerLimit  Units: Meters
+	 * @param upperLimit  Units: Meters
+	 * @return <b>stormRelativeMeanWind</b> Units: array of m s^-1, first entry:
+	 *         uWind, second entry: vWind
+	 */
+	public static double[] stormRelativeMeanWind(double[] pressure, double[] uWind, double[] vWind,
+			double[] stormMotion, double lowerLimit, double upperLimit) {
+		double meanWindUSum = 0.0; // m s^-1
+		double meanWindVSum = 0.0; // m s^-1
+		double weightSum = 0.0;
+
+		double lowerPressure = WeatherUtils.pressureAtHeight(pressure[pressure.length - 1], lowerLimit);
+		double upperPressure = WeatherUtils.pressureAtHeight(pressure[pressure.length - 1], upperLimit);
+
+		for (int i = 0; i < uWind.length - 1; i++) {
+			double pressure1 = pressure[i];
+			double uWind1 = uWind[i];
+			double vWind1 = vWind[i];
+
+			double pressure2 = pressure[i + 1];
+			double uWind2 = uWind[i + 1];
+			double vWind2 = vWind[i + 1];
+
+			double height1 = heightAtPressure(pressure[pressure.length - 1], pressure1);
+			double height2 = heightAtPressure(pressure[pressure.length - 1], pressure2);
+
+			if (height1 <= lowerLimit || height2 >= upperLimit) {
+				continue;
+			} else {
+				if (upperLimit < height1 && upperLimit > height2) {
+					uWind1 = logInterp(pressure, uWind, upperPressure);
+					vWind1 = logInterp(pressure, vWind, upperPressure);
+					height1 = upperLimit;
+				}
+
+				if (lowerLimit < height1 && lowerLimit > height2) {
+					uWind2 = logInterp(pressure, uWind, lowerPressure);
+					vWind2 = logInterp(pressure, vWind, lowerPressure);
+					height2 = lowerLimit;
+				}
+
+				double weight = height1 - height2;
+
+				meanWindUSum += weight * (uWind1 + uWind2) / 2.0;
+				meanWindVSum += weight * (vWind1 + vWind2) / 2.0;
+				weightSum += weight;
+			}
+		}
+
+		double meanWindU = meanWindUSum / weightSum;
+		double meanWindV = meanWindVSum / weightSum;
+
+		return new double[] { meanWindU - stormMotion[0], meanWindV - stormMotion[1] };
+	}
+
+	/**
+	 * Computes the streamwiseness of the vorticity available in the inflow of a
+	 * convective storm.
+	 * 
+	 * Assumes all arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param pressure    Units: array of Pascals
+	 * @param uWind       Units: array of m s^-1
+	 * @param vWind       Units: array of m s^-1
+	 * @param stormMotion Units: array of m s^-1 {first: uWind, second: vWind}
+	 * @param lowerLimit  Units: Meters
+	 * @param upperLimit  Units: Meters
+	 * @return <b>streamwisenessOfVorticity</b> Units: Fraction
+	 */
+	public static double streamwisenessOfVorticity(double[] pressure, double[] uWind, double[] vWind,
+			double[] stormMotion, double lowerLimit, double upperLimit) {
+		double streamwiseVorticity = streamwiseVorticity(pressure, uWind, vWind, stormMotion, lowerLimit, upperLimit);
+		double totalVorticity = totalHorizontalVorticity(pressure, uWind, vWind, lowerLimit, upperLimit);
+
+		return streamwiseVorticity / totalVorticity;
+	}
+
+	/**
+	 * Computes the streamwise vorticity available in the inflow of a convective
+	 * storm.
+	 * 
+	 * Assumes all arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param pressure    Units: array of Pascals
+	 * @param uWind       Units: array of m s^-1
+	 * @param vWind       Units: array of m s^-1
+	 * @param stormMotion Units: array of m s^-1 {first: uWind, second: vWind}
+	 * @param lowerLimit  Units: Meters
+	 * @param upperLimit  Units: Meters
+	 * @return <b>streamwiseVorticity</b> Units: s^-1
+	 */
+	public static double streamwiseVorticity(double[] pressure, double[] uWind, double[] vWind, double[] stormMotion,
+			double lowerLimit, double upperLimit) {
+		double streamwiseVorticityWeightedSum = 0.0; // s^-1
+		double weightSum = 0.0;
+
+		double lowerPressure = WeatherUtils.pressureAtHeight(pressure[pressure.length - 1], lowerLimit);
+		double upperPressure = WeatherUtils.pressureAtHeight(pressure[pressure.length - 1], upperLimit);
+
+		for (int i = 0; i < uWind.length - 1; i++) {
+			double pressure1 = pressure[i];
+			double uWind1 = uWind[i];
+			double vWind1 = vWind[i];
+
+			double pressure2 = pressure[i + 1];
+			double uWind2 = uWind[i + 1];
+			double vWind2 = vWind[i + 1];
+
+			double height1 = heightAtPressure(pressure[pressure.length - 1], pressure1);
+			double height2 = heightAtPressure(pressure[pressure.length - 1], pressure2);
+
+			if (height1 <= lowerLimit || height2 >= upperLimit) {
+				continue;
+			} else {
+				if (upperLimit < height1 && upperLimit > height2) {
+					uWind1 = logInterp(pressure, uWind, upperPressure);
+					vWind1 = logInterp(pressure, vWind, upperPressure);
+					height1 = upperLimit;
+				}
+
+				if (lowerLimit < height1 && lowerLimit > height2) {
+					uWind2 = logInterp(pressure, uWind, lowerPressure);
+					vWind2 = logInterp(pressure, vWind, lowerPressure);
+					height2 = lowerLimit;
+				}
+
+				double weight = height1 - height2;
+
+				if (weight != 0) {
+					double horizontalVorticityU = -(vWind1 - vWind2) / (height1 - height2);
+					double horizontalVorticityV = (uWind1 - uWind2) / (height1 - height2);
+
+					double meanWindU = (uWind1 + uWind2) / 2.0;
+					double meanWindV = (vWind1 + vWind2) / 2.0;
+
+					double stormInflowU = meanWindU - stormMotion[0];
+					double stormInflowV = meanWindV - stormMotion[1];
+
+					double stormInflowNormU = stormInflowU / Math.hypot(stormInflowU, stormInflowV);
+					double stormInflowNormV = stormInflowV / Math.hypot(stormInflowU, stormInflowV);
+
+					double streamwiseVorticity = horizontalVorticityU * stormInflowNormU
+							+ horizontalVorticityV * stormInflowNormV;
+
+//					System.out.printf("%6.3f\t%6.3f\n", horizontalVorticityU, horizontalVorticityV);
+//					System.out.printf("%6.3f\t%6.3f\n", stormInflowNormU, stormInflowNormV);
+//					System.out.println("streamwiseVorticityWeightedSum-b: " + streamwiseVorticityWeightedSum);
+
+					streamwiseVorticityWeightedSum += weight * streamwiseVorticity;
+					weightSum += weight;
+
+//					System.out.println("streamwiseVorticityWeightedSum-a: " + streamwiseVorticityWeightedSum);
+				}
+			}
+		}
+
+		return streamwiseVorticityWeightedSum / weightSum;
+	}
+
+	/**
+	 * Computes the total wind shear induced horizontal vorticity available in the
+	 * inflow of a convective storm.
+	 * 
+	 * Assumes all arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param pressure    Units: array of Pascals
+	 * @param uWind       Units: array of m s^-1
+	 * @param vWind       Units: array of m s^-1
+	 * @param stormMotion Units: array of m s^-1 {first: uWind, second: vWind}
+	 * @param lowerLimit  Units: Meters
+	 * @param upperLimit  Units: Meters
+	 * @return <b>streamwiseVorticity</b> Units: s^-1
+	 */
+	public static double totalHorizontalVorticity(double[] pressure, double[] uWind, double[] vWind, double lowerLimit,
+			double upperLimit) {
+		double horizontalVorticityWeightedSum = 0.0; // s^-1
+		double weightSum = 0.0;
+
+		double lowerPressure = WeatherUtils.pressureAtHeight(pressure[pressure.length - 1], lowerLimit);
+		double upperPressure = WeatherUtils.pressureAtHeight(pressure[pressure.length - 1], upperLimit);
+
+		for (int i = 0; i < uWind.length - 1; i++) {
+			double pressure1 = pressure[i];
+			double uWind1 = uWind[i];
+			double vWind1 = vWind[i];
+
+			double pressure2 = pressure[i + 1];
+			double uWind2 = uWind[i + 1];
+			double vWind2 = vWind[i + 1];
+
+			double height1 = heightAtPressure(pressure[pressure.length - 1], pressure1);
+			double height2 = heightAtPressure(pressure[pressure.length - 1], pressure2);
+
+			if (height1 <= lowerLimit || height2 >= upperLimit) {
+				continue;
+			} else {
+				if (upperLimit < height1 && upperLimit > height2) {
+					uWind1 = logInterp(pressure, uWind, upperPressure);
+					vWind1 = logInterp(pressure, vWind, upperPressure);
+					height1 = upperLimit;
+				}
+
+				if (lowerLimit < height1 && lowerLimit > height2) {
+					uWind2 = logInterp(pressure, uWind, lowerPressure);
+					vWind2 = logInterp(pressure, vWind, lowerPressure);
+					height2 = lowerLimit;
+				}
+
+				double weight = height1 - height2;
+
+				if (weight != 0) {
+					double horizontalVorticityU = -(vWind1 - vWind2) / (height1 - height2);
+					double horizontalVorticityV = (uWind1 - uWind2) / (height1 - height2);
+
+					double horizontalVorticity = Math.hypot(horizontalVorticityU, horizontalVorticityV);
+
+					horizontalVorticityWeightedSum += weight * horizontalVorticity;
+					weightSum += weight;
+				}
+			}
+		}
+
+		return horizontalVorticityWeightedSum / weightSum;
+	}
+
+	/**
+	 * Section 5 - Composite Indices Equivalent to CompInd.cpp in C++ version of the
+	 * library
+	 */
+
+	/**
+	 * An experimental parameter currently in development by Amelia Urquhart. It
+	 * calculates the angle between the ground-relative storm motion vector and the
+	 * Deviant Tornado Motion vector (developed by Dr. Cameron Nixon). It then
+	 * assigns a value to that angle ranging between -4 and +4. It is primarily
+	 * intended for use by storm spotters and weather photographers to keep them
+	 * aware of the possibility of direction changes at the end of a tornado's life,
+	 * but may also be useful for some operational forecasting purposes. <br>
+	 * <br>
+	 * 
+	 * If the significant tornado parameter is less than 0.5, DEVTOR is set to
+	 * 0.<br>
+	 * <br>
+	 * 
+	 * Interpretation:<br>
+	 * <br>
+	 * 
+	 * -4 - Reversal <br>
+	 * -3 - Extreme Right Deviation (135 degrees) <br>
+	 * -2 - Major Right Deviation (90 degrees) <br>
+	 * -1 - Significant Right Deviation (45 degrees) <br>
+	 * +0 - No Significant Deviation Expected <br>
+	 * +1 - Significant Left Deviation (45 degrees) <br>
+	 * +2 - Major Left Deviation (90 degrees) <br>
+	 * +3 - Extreme Left Deviation (135 degrees) <br>
+	 * +4 - Reversal
+	 * 
+	 * @param sigtor               Units: dimensionless
+	 * @param stormMotion          Units: array of m s^-1
+	 * @param deviantTornadoMotion Units: array of m s^-1
+	 * @return <b>deviantTornadoParameter</b> Units: dimensionless
+	 */
+	public static double deviantTornadoParameter(double sigtor, double[] stormMotion, double[] deviantTornadoMotion) {
+		if (Math.abs(sigtor) < 0.5)
+			return 0.0;
+
+		double stormMotionMagnitude = Math.hypot(stormMotion[0], stormMotion[1]);
+		double deviantTornadoMotionMagnitude = Math.hypot(deviantTornadoMotion[0], deviantTornadoMotion[1]);
+
+		double[] stormMotionNorm = new double[2];
+		double[] deviantTornadoMotionNorm = new double[2];
+
+		stormMotionNorm[0] = stormMotion[0] / stormMotionMagnitude;
+		stormMotionNorm[1] = stormMotion[1] / stormMotionMagnitude;
+
+		deviantTornadoMotionNorm[0] = deviantTornadoMotion[0] / deviantTornadoMotionMagnitude;
+		deviantTornadoMotionNorm[1] = deviantTornadoMotion[1] / deviantTornadoMotionMagnitude;
+
+		double dotProduct = stormMotionNorm[0] * deviantTornadoMotionNorm[0]
+				+ stormMotionNorm[1] * deviantTornadoMotionNorm[1];
+		double crossProduct = stormMotionNorm[0] * deviantTornadoMotionNorm[1]
+				- stormMotionNorm[1] * deviantTornadoMotionNorm[0];
+		
+		System.out.println("devtor:");
+		System.out.println(dotProduct);
+		System.out.println(crossProduct);
+		
+		double angleSegment = Math.abs(Math.toDegrees(Math.acos(dotProduct)));
+		
+		System.out.println(angleSegment);
+		
+		double angle = 0;
+		
+		if(dotProduct >= 0 && crossProduct >= 0) {
+			angle = angleSegment;
+		} else if(dotProduct < 0 && crossProduct >= 0) {
+			angle = angleSegment;
+		} else if(dotProduct >= 0 && crossProduct < 0) {
+			angle = -angleSegment;
+		} else if(dotProduct < 0 && crossProduct < 0) {
+			angle = -angleSegment;
+		}
+		
+		System.out.println(angle);
+		
+		double deviantTornadoParameter = angle/45.0;
+		return deviantTornadoParameter;
+	}
+
+	/**
+	 * Computes the significant tornado parameter using the SPC's formula.
+	 * 
+	 * Assumes all arrays are sorted in order of increasing pressure.
+	 * 
+	 * Reference: https://www.spc.noaa.gov/exper/mesoanalysis/help/help_stpc.html
+	 * 
+	 * @param pressure    Units: array of Pascals
+	 * @param temperature Units: array of Kelvins
+	 * @param dewpoint    Units: array of Kelvins
+	 * @param uWind       Units: array of m s^-1
+	 * @param vWind       Units: array of m s^-1
+	 * @return <b>significantTornadoParameter</b> Units: dimensionless
+	 */
+
+	public static double significantHailParameter(double[] pressure, double[] temperature, double[] dewpoint,
+			double[] uWind, double[] vWind) {
+		ArrayList<RecordAtLevel> muParcel = computeParcelPath(pressure, temperature, dewpoint, ParcelPath.MOST_UNSTABLE,
+				false);
+
+		double mucape = computeCape(pressure, temperature, dewpoint, muParcel);
+
+		RecordAtLevel muParcelOrigin = muParcel.get(muParcel.size() - 1);
+		double muParcelMixingRatio = mixingRatio(muParcelOrigin.pressure, muParcelOrigin.dewpoint);
+
+		double temperature700mb = logInterp(pressure, temperature, 70000);
+		double height700mb = heightAtPressure(pressure[pressure.length - 1], 70000);
+
+		double temperature500mb = logInterp(pressure, temperature, 50000);
+		double height500mb = heightAtPressure(pressure[pressure.length - 1], 50000);
+
+		double lapseRate700_500 = (temperature700mb - temperature500mb) / (height500mb - height700mb);
+
+		double shear0_6km = WeatherUtils.bulkShearMagnitude(pressure, uWind, vWind, 0, 6000);
+
+		return significantHailParameter(mucape, muParcelMixingRatio, lapseRate700_500, temperature500mb, shear0_6km);
+	}
+
+	/**
+	 * Computes the significant tornado parameter using the SPC's formula.
+	 * 
+	 * Reference: https://www.spc.noaa.gov/exper/mesoanalysis/help/help_sigh.html
+	 * 
+	 * @param mucape              Units: J kg^-1
+	 * @param muParcelMixingRatio Units: g g^-1
+	 * @param lapseRate700_500    Units: K m^-1
+	 * @param tmp500mb            Units: Kelvins
+	 * @param shear0_6km          Units: m s^-1
+	 * @return <b>significantHailParameter</b> Units: dimensionless
+	 */
+
+	public static double significantHailParameter(double mucape, double muParcelMixingRatio, double lapseRate700_500,
+			double tmp500mb, double shear0_6km) {
+		muParcelMixingRatio *= 1000;
+		lapseRate700_500 *= 1000;
+
+		if (shear0_6km < 7)
+			shear0_6km = 7;
+		if (shear0_6km > 27)
+			shear0_6km = 27;
+
+		if (muParcelMixingRatio < 11)
+			muParcelMixingRatio = 11;
+		if (muParcelMixingRatio > 13.6)
+			muParcelMixingRatio = 13.6;
+
+		double tmp500mbC = tmp500mb - 273.15;
+		if (tmp500mbC > -5.5)
+			muParcelMixingRatio = -5.5;
+
+		double significantHailParameter = mucape * muParcelMixingRatio * lapseRate700_500 * -tmp500mbC * shear0_6km
+				/ 42000000.0;
+
+		if (mucape < 1300)
+			significantHailParameter *= (mucape / 1300);
+		if (lapseRate700_500 < 5.8)
+			significantHailParameter *= (lapseRate700_500 / 5.8);
+
+		return significantHailParameter;
+	}
+
+	/**
+	 * Computes the significant tornado parameter using the SPC's formula.
+	 * 
+	 * Assumes all arrays are sorted in order of increasing pressure.
+	 * 
+	 * Reference: https://www.spc.noaa.gov/exper/mesoanalysis/help/help_stpc.html
+	 * 
+	 * @param pressure    Units: array of Pascals
+	 * @param temperature Units: array of Kelvins
+	 * @param dewpoint    Units: array of Kelvins
+	 * @param uWind       Units: array of m s^-1
+	 * @param vWind       Units: array of m s^-1
+	 * @return <b>significantTornadoParameter</b> Units: dimensionless
+	 */
+
+	public static double significantTornadoParameter(double[] pressure, double[] height, double[] temperature,
+			double[] dewpoint, double[] uWind, double[] vWind) {
+		double[] stormMotion = stormMotionBunkersIDRightMoving(pressure, uWind, vWind);
+		
+		return significantTornadoParameter(pressure, height, temperature, dewpoint, uWind, vWind, stormMotion);
+	}
+
+	/**
+	 * Computes the significant tornado parameter using the SPC's formula.
+	 * 
+	 * Assumes all arrays are sorted in order of increasing pressure.
+	 * 
+	 * Reference: https://www.spc.noaa.gov/exper/mesoanalysis/help/help_stpc.html
+	 * 
+	 * @param pressure    Units: array of Pascals
+	 * @param temperature Units: array of Kelvins
+	 * @param dewpoint    Units: array of Kelvins
+	 * @param uWind       Units: array of m s^-1
+	 * @param vWind       Units: array of m s^-1
+	 * @return <b>significantTornadoParameter</b> Units: dimensionless
+	 */
+
+	public static double significantTornadoParameter(double[] pressure, double[] height, double[] temperature,
+			double[] dewpoint, double[] uWind, double[] vWind, double[] stormMotion) {
+		double[] inflowLayer = effectiveInflowLayer(pressure, height, temperature, dewpoint);
+
+		if (inflowLayer[0] == -1024.0 || inflowLayer[0] > 2.1)
+			return 0.0;
+
+		double mlcape = computeMl100cape(pressure, temperature, dewpoint);
+
+		ArrayList<RecordAtLevel> mlParcel = WeatherUtils.computeParcelPath(pressure, temperature, dewpoint,
+				ParcelPath.MIXED_LAYER_100MB, false);
+		double mlLcl = WeatherUtils.liftedCondensationLevel(pressure[pressure.length - 1], mlParcel);
+
+		double effectiveSrh = stormRelativeHelicity(pressure, height, uWind, vWind, stormMotion, inflowLayer[0],
+				inflowLayer[1]);
+
+		double[] effectiveBwdVector = effectiveBulkWindDifference(pressure, height, temperature, dewpoint, uWind, vWind);
+		double effectiveBwd = Math.hypot(effectiveBwdVector[0], effectiveBwdVector[1]);
+
+		double mlcinh = computeMl100cinh(pressure, temperature, dewpoint);
+
+		return significantTornadoParameter(mlcape, inflowLayer[0], mlLcl, effectiveSrh, effectiveBwd, mlcinh);
+	}
+
+	/**
+	 * Computes the significant tornado parameter using the SPC's formula.
+	 * 
+	 * Reference: https://www.spc.noaa.gov/exper/mesoanalysis/help/help_stpc.html
+	 * 
+	 * @param mlcape       Units: J kg^-1
+	 * @param inflowBase   Units: meters
+	 * @param mlLcl        Units: meters
+	 * @param effectiveSrh Units: m^2 s^-2
+	 * @param effectiveBwd Units: m s^-1
+	 * @param mlcinh       Units: J kg^-1
+	 * @return <b>significantTornadoParameter</b> Units: dimensionless
+	 */
+
+	public static double significantTornadoParameter(double mlcape, double inflowBase, double mlLcl,
+			double effectiveSrh, double effectiveBwd, double mlcinh) {
+		if (inflowBase == -1024.0 || inflowBase > 2.1)
+			return 0.0;
+
+		double mlcapeTerm = mlcape / 1500.0;
+		double mlLclTerm = (2000.0 - mlLcl) / 1000.0;
+		double esrhTerm = effectiveSrh / 150.0;
+		double ebwdTerm = effectiveBwd / 20.0;
+		double mlcinhTerm = (200.0 + mlcinh) / 150.0;
+
+		if (mlLcl > 2000) {
+			mlLclTerm = 0.0;
+		} else if (mlLcl < 1000) {
+			mlLclTerm = 1.0;
+		}
+
+		if (effectiveBwd > 30) {
+			ebwdTerm = 1.5;
+		} else if (effectiveBwd < 12.5) {
+			ebwdTerm = 0.0;
+		}
+
+		if (mlcinh > -50) {
+			mlcinhTerm = 1.0;
+		} else if (mlcinh < -200) {
+			mlcinhTerm = 0.0;
+		}
+
+		double significantTornadoParameter = mlcapeTerm * mlLclTerm * esrhTerm * ebwdTerm * mlcinhTerm;
+		return significantTornadoParameter;
+	}
+
+	/**
+	 * Computes the supercell composite using the SPC's formula.
+	 * 
+	 * Assumes all arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param mucape       Units: J kg^-1
+	 * @param effectiveSrh Units: m^2 s^-2
+	 * @param effectiveBwd Units: m s^-1
+	 * @param mucinh       Units: J kg^-1
+	 * @return <b>supercellComposite</b> Units: dimensionless
+	 */
+
+	public static double supercellComposite(double[] pressure, double[] height, double[] temperature, double[] dewpoint,
+			double[] uWind, double[] vWind) {
+		double[] stormMotion = stormMotionBunkersIDRightMoving(pressure, uWind, vWind);
+		
+		return supercellComposite(pressure, height, temperature, dewpoint, uWind, vWind, stormMotion);
+	}
+
+	/**
+	 * Computes the supercell composite using the SPC's formula.
+	 * 
+	 * Assumes all arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param mucape       Units: J kg^-1
+	 * @param effectiveSrh Units: m^2 s^-2
+	 * @param effectiveBwd Units: m s^-1
+	 * @param mucinh       Units: J kg^-1
+	 * @return <b>supercellComposite</b> Units: dimensionless
+	 */
+
+	public static double supercellComposite(double[] pressure, double[] height, double[] temperature, double[] dewpoint,
+			double[] uWind, double[] vWind, double[] stormMotion) {
+		double mucape = computeMucape(pressure, temperature, dewpoint);
+
+		double[] inflowLayer = effectiveInflowLayer(pressure, height, temperature, dewpoint);
+
+		double effectiveSrh = stormRelativeHelicity(pressure, height, uWind, vWind, stormMotion, inflowLayer[0],
+				inflowLayer[1]);
+
+		double[] effectiveBwdVector = effectiveBulkWindDifference(pressure, height, temperature, dewpoint, uWind, vWind);
+		double effectiveBwd = Math.hypot(effectiveBwdVector[0], effectiveBwdVector[1]);
+
+		double mucinh = computeMucinh(pressure, temperature, dewpoint);
+
+		return supercellComposite(mucape, effectiveSrh, effectiveBwd, mucinh);
+	}
+
+	/**
+	 * Computes the supercell composite using the SPC's formula.
+	 * 
+	 * @param mucape       Units: J kg^-1
+	 * @param effectiveSrh Units: m^2 s^-2
+	 * @param effectiveBwd Units: m s^-1
+	 * @param mucinh       Units: J kg^-1
+	 * @return <b>supercellComposite</b> Units: dimensionless
+	 */
+
+	public static double supercellComposite(double mucape, double effectiveSrh, double effectiveBwd, double mucinh) {
+		double mucapeTerm = mucape / 1000.0;
+		double esrhTerm = effectiveSrh / 50.0;
+		double ebwdTerm = 0.0;
+
+		if (effectiveBwd > 20) {
+			ebwdTerm = 1.0;
+		} else if (effectiveBwd > 10) {
+			ebwdTerm = effectiveBwd / 20.0;
+		}
+
+		double mucinhTerm = 1.0;
+
+		if (mucinh < -40) {
+			mucinhTerm = -40 / mucinh;
+		}
+
+		double supercellComposite = mucapeTerm * esrhTerm * ebwdTerm * mucinhTerm;
+		return supercellComposite;
 	}
 
 	/**
@@ -610,36 +2540,113 @@ public class WeatherUtils {
 		float kucheraRatio = (maxColTemp < 271.16f ? 12 + (271.16f - maxColTemp) : 12 + 2 * (271.16f - maxColTemp));
 		return kucheraRatio;
 	}
-	
+
 	// private backend methods
-	
+
 	// inputArr assumed to already be sorted and increasing
 	private static double linearInterp(double[] inputArr, double[] outputArr, double input) {
-		if(input < inputArr[0]) {
+		if (input < inputArr[0]) {
 			return outputArr[0];
 		} else if (input >= inputArr[inputArr.length - 1]) {
 			return outputArr[outputArr.length - 1];
 		} else {
-			for(int i = 0; i < inputArr.length - 1; i++) {
+			for (int i = 0; i < inputArr.length - 1; i++) {
 				double input1 = inputArr[i];
 				double input2 = inputArr[i + 1];
-				
+
 				if (input == input1) {
 					return outputArr[i];
 				} else if (input < input2) {
 					double output1 = outputArr[i];
 					double output2 = outputArr[i + 1];
-					
-					double weight1 = (input2 - input)/(input2 - input1);
-					double weight2 = (input - input1)/(input2 - input1);
-					
+
+					double weight1 = (input2 - input) / (input2 - input1);
+					double weight2 = (input - input1) / (input2 - input1);
+
 					return output1 * weight1 + output2 * weight2;
 				} else {
 					continue;
 				}
 			}
-			
+
 			return -1024.0;
 		}
+	}
+
+	// inputArr assumed to already be sorted and increasing
+	private static double logInterp(double[] inputArr, double[] outputArr, double input) {
+		if (input < inputArr[0]) {
+			return outputArr[0];
+		} else if (input >= inputArr[inputArr.length - 1]) {
+			return outputArr[outputArr.length - 1];
+		} else {
+			for (int i = 0; i < inputArr.length - 1; i++) {
+				if (i + 1 == outputArr.length) {
+					return outputArr[outputArr.length - 1];
+				}
+
+				double input1 = inputArr[i];
+				double input2 = inputArr[i + 1];
+
+				if (input == input1) {
+					return outputArr[i];
+				} else if (input < input2) {
+					double logInput1 = Math.log(input1);
+					double logInput2 = Math.log(input2);
+					double logInput = Math.log(input);
+
+					double output1 = outputArr[i];
+					double output2 = outputArr[i + 1];
+
+					double weight1 = (logInput2 - logInput) / (logInput2 - logInput1);
+					double weight2 = (logInput - logInput1) / (logInput2 - logInput1);
+
+					return output1 * weight1 + output2 * weight2;
+				} else {
+					continue;
+				}
+			}
+
+			return -1024.0;
+		}
+	}
+
+	// for use in eff inflow layer calculations
+	private static double[] truncateArray(double[] arr, int length) {
+		double[] ret = new double[Integer.min(arr.length, length)];
+
+		for (int i = 0; i < ret.length; i++) {
+			ret[i] = arr[i];
+		}
+
+		return ret;
+	}
+
+	// for use in helicity calculations. first point is storm motion
+	private static double triangleArea(double[] x, double[] y) {
+		double stormMotionU = x[0];
+		double stormMotionV = y[0];
+
+		double windUpperU = x[1];
+		double windUpperV = y[1];
+
+		double windLowerU = x[2];
+		double windLowerV = y[2];
+
+		double basisVectorU = windUpperU - stormMotionU;
+		double basisVectorV = windUpperV - stormMotionV;
+
+		double rightAngleU = -basisVectorV / Math.hypot(basisVectorU, basisVectorV);
+		double rightAngleV = basisVectorU / Math.hypot(basisVectorU, basisVectorV);
+
+		double diffVectorU = windLowerU - windUpperU;
+		double diffVectorV = windLowerV - windUpperV;
+
+		double dotProduct = diffVectorU * rightAngleU + diffVectorV * rightAngleV;
+
+		double area = 0.5 * Math.abs(stormMotionU * (windUpperV - windLowerV) + windUpperU * (windLowerV - stormMotionV)
+				+ windLowerU * (stormMotionV - windUpperV));
+
+		return Math.signum(dotProduct) * area;
 	}
 }

@@ -22,7 +22,7 @@ public class RecordAtLevel implements Comparable<RecordAtLevel> {
 	
 	@Override
 	public String toString() {
-		return "[p: " + pressure + ",\tt:" + temperature + ",\tw:" + wetbulb + ",\td:" + dewpoint + ",\th:" + height + "]\n";
+		return "[p: " + pressure + ",\tt:" + temperature + ",\tw:" + wetbulb + ",\td:" + dewpoint + ",\th:" + height + "]";
 	}
 
 	public double getPressure() {
