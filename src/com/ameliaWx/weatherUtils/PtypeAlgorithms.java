@@ -37,15 +37,291 @@ public class PtypeAlgorithms {
 		System.out.println(ptype);
 	}
 
-	public static PrecipitationType freezingPointMethod(double tmp2m) {
-		if (tmp2m > 273.15) {
+	/**
+	 * @param pressureLevels   All pressure levels of the profile, in Pascals
+	 * @param tmpIsobaric      All isobaric temperatures of the profile, in Kelvins
+	 * @param dptIsobaric      All isobaric dewpoints of the profile, in Kelvins
+	 * @param hgtIsobaric      All isobaric heights of the profile, in Meters
+	 * @param dynamicInitLayer true = find highest level with a dewpoint depression
+	 *                         of 3 K, false = always init at 500 mb
+	 * @return The precipitation type diagnosed by the Bourgouin 2000 Method
+	 *         (http://employees.oneonta.edu/blechmjb/JBpages/M361/BUFKITlabs/Bourgouin/Bourgouin2000.pdf)
+	 */
+	public static PrecipitationType bourgouinMethod(double[] pressureLevels, double[] tmpIsobaric,
+			double[] dptIsobaric, double[] hgtIsobaric, double presSurface, double hgtSurface,
+			boolean dynamicInitLayer) {
+//		System.out.println("start bourgouin 2000");
+		
+		if (tmpIsobaric[tmpIsobaric.length - 1] >= 283.15)
 			return RAIN;
-		} else {
+
+		List<RecordAtLevel> isobaricData = new ArrayList<>();
+		for (int i = 0; i < dptIsobaric.length; i++) {
+//			System.out.println("pres: " + pressureLevels[i]);
+//			System.out.println("tmp: " + tmpIsobaric[i]);
+//			System.out.println("dpt: " + dptIsobaric[i]);
+//			System.out.println("wbt: " + WeatherUtils.wetBulbTemperature(tmpIsobaric[i], dptIsobaric[i], pressureLevels[i]));
+			isobaricData.add(new RecordAtLevel(pressureLevels[i], tmpIsobaric[i], dptIsobaric[i], hgtIsobaric[i]));
+//			System.out.printf("pressure: %4d mb temperature: %6.2f K, wetbulb: %6.2f K, dewpoint: %6.2f K, hgtIsobaric: %6d m\n", (int) pressureLevels[i]/100, tmpIsobaric[i], isobaricData.get(i).wetbulb, dptIsobaric[i], (int) hgtIsobaric[i]);
+		}
+
+//		System.out.println("built isobaricData");
+
+		Collections.sort(isobaricData); // should sort top of atmosphere to start of list, surface to bottom of list
+
+		// effectively removes subsurface records
+		for (int i = 0; i < dptIsobaric.length; i++) {
+			double heightAtLevel = isobaricData.get(i).height;
+
+			if (heightAtLevel < hgtSurface) {
+				isobaricData.get(i).height = hgtSurface;
+				isobaricData.get(i).pressure = presSurface;
+				isobaricData.get(i).temperature = isobaricData.get(i - 1).temperature;
+				isobaricData.get(i).wetbulb = isobaricData.get(i - 1).wetbulb;
+				isobaricData.get(i).dewpoint = isobaricData.get(i - 1).dewpoint;
+			}
+		}
+
+//		System.out.println(Arrays.toString(isobaricData.toArray()));
+
+		double initPressureLayer = 50000;
+
+		if (dynamicInitLayer) {
+			// looks for first level with a dewpoint depression less than or equal to 3
+			// kelvins
+			// assumes that's the precip initial layer
+			for (int i = 0; i < dptIsobaric.length; i++) {
+//				System.out.println(isobaricData.get(i).pressure/100 + "\t" + dewpointDepression);
+				
+				double rh = WeatherUtils.relativeHumidity(isobaricData.get(i).temperature, isobaricData.get(i).dewpoint);
+				
+				if (rh >= 0.9) {
+					initPressureLayer = isobaricData.get(i).pressure;
+					break;
+				}
+			}
+		}
+
+//		System.out.println(initPressureLayer);
+
+		int precipInitIndex = -1;
+		for (int i = 0; i < dptIsobaric.length; i++) {
+			if (isobaricData.get(i).pressure >= initPressureLayer) {
+				precipInitIndex = i;
+				break;
+			}
+		}
+//		System.out.println(precipInitIndex);
+
+		// uses freezing point method if dynamic init layer is used and no
+		// precip layers are detected
+		if (precipInitIndex == -1 || isobaricData.get(precipInitIndex).height - 3 < hgtSurface)
+			return freezingPointMethod(tmpIsobaric[tmpIsobaric.length - 1]);
+
+		// checks if all wet bulb is freezing, saves time on the vertical profile check
+		boolean allFreezing = true;
+		for (int i = precipInitIndex; i < isobaricData.size(); i++) {
+			if (isobaricData.get(i).wetbulb > 273.15) {
+				allFreezing = false;
+				break;
+			}
+		}
+
+		if (allFreezing) {
 			return SNOW;
 		}
-	}
 
-	// make a bourgouin original method too just for shits
+		// checks if there's a sufficiently big surface melting layer, saves time on
+		// vertical profile check
+//		if (isobaricData.get(isobaricData.size() - 1).temperature > 273.15) {
+//			double meltingEnergy = 0.0;
+//			for (int i = isobaricData.size() - 1; i >= 1; i--) {
+//				double heightLower = isobaricData.get(i).height;
+//				double heightUpper = isobaricData.get(i - 1).height;
+//				double temperatureLower = isobaricData.get(i).temperature;
+//				double temperatureUpper = isobaricData.get(i - 1).temperature;
+//
+//				if (temperatureUpper > 273.15) {
+//					// trapezoidal integration
+//					double trapezoidWidthLower = G * ((temperatureLower - T0) / T0);
+//					double trapezoidWidthUpper = G * ((temperatureUpper - T0) / T0);
+//
+//					double avgTrapezoidWidth = (trapezoidWidthLower + trapezoidWidthUpper) / 2;
+//					double trapezoidHeight = heightUpper - heightLower;
+//
+//					meltingEnergy += avgTrapezoidWidth * trapezoidHeight;
+//				} else {
+//					double freezingPointHeight = linScale(temperatureLower, temperatureUpper, heightLower, heightUpper, T0);
+//
+//					// trapezoidal integration (kinda)
+//					double trapezoidWidthLower = G * ((temperatureLower - T0) / T0);
+//					double trapezoidWidthUpper = 0;
+//
+//					double avgTrapezoidWidth = (trapezoidWidthLower + trapezoidWidthUpper) / 2;
+//					double trapezoidHeight = freezingPointHeight - heightLower;
+//
+//					meltingEnergy += avgTrapezoidWidth * trapezoidHeight;
+//
+//					break;
+//				}
+//				
+//				System.out.println("bourgouin ME:" + meltingEnergy);
+//
+//				if (meltingEnergy > 13.2) {
+//					return RAIN;
+//				} else if (meltingEnergy >= 5.6) {
+//					return RAIN_SNOW_MIX;
+//				}
+//			}
+//		}
+
+		// uses wet-bulb
+		double meltingEnergy = 0.0;
+		double refreezingEnergy = 0.0;
+		double remeltingEnergy = 0.0;
+
+		for (int i = precipInitIndex; i < isobaricData.size() - 1; i++) {
+			double heightLower = isobaricData.get(i + 1).height;
+			double heightUpper = isobaricData.get(i).height;
+			double temperatureLower = isobaricData.get(i + 1).temperature;
+			double temperatureUpper = isobaricData.get(i).temperature;
+
+			if (temperatureUpper > 273.15 && temperatureLower > 273.15) {
+				// trapezoidal integration
+				double trapezoidWidthLower = G * ((temperatureLower - T0) / T0);
+				double trapezoidWidthUpper = G * ((temperatureUpper - T0) / T0);
+
+				double avgTrapezoidWidth = -(trapezoidWidthLower + trapezoidWidthUpper) / 2;
+				double trapezoidHeight = heightUpper - heightLower;
+
+				double trapezoidArea = avgTrapezoidWidth * trapezoidHeight;
+
+//				System.out.println("TH          :  " + temperatureLower);
+//				System.out.println("TH          :  " + temperatureUpper);
+//				System.out.println("TH          :  " + heightLower);
+//				System.out.println("TH          :  " + heightUpper);
+//				System.out.println("TH          :  " + trapezoidWidthLower);
+//				System.out.println("TH          :  " + trapezoidWidthUpper);
+//				System.out.println("TH          :  " + avgTrapezoidWidth);
+//				System.out.println("TH          :  " + trapezoidHeight);
+//				System.out.println("PA trapezoid:  " + trapezoidArea);
+//				System.out.println("bourgouin ME:  " + meltingEnergy);
+//				System.out.println("bourgouin RFE: " + refreezingEnergy);
+//				System.out.println("bourgouin RME: " + remeltingEnergy);
+
+				if (refreezingEnergy == 0.0) {
+					meltingEnergy += Math.abs(trapezoidArea);
+				} else {
+					remeltingEnergy += Math.abs(trapezoidArea);
+				}
+			} else if (temperatureUpper <= 273.15 && temperatureLower <= 273.15) {
+				// trapezoidal integration
+				double trapezoidWidthLower = G * ((temperatureLower - T0) / T0);
+				double trapezoidWidthUpper = G * ((temperatureUpper - T0) / T0);
+
+				double avgTrapezoidWidth = -(trapezoidWidthLower + trapezoidWidthUpper) / 2;
+				double trapezoidHeight = heightUpper - heightLower;
+
+				double trapezoidArea = avgTrapezoidWidth * trapezoidHeight;
+				
+//				System.out.println("NA trapezoid:  " + trapezoidArea);
+//				System.out.println("bourgouin ME:  " + meltingEnergy);
+//				System.out.println("bourgouin RFE: " + refreezingEnergy);
+//				System.out.println("bourgouin RME: " + remeltingEnergy);
+
+				if (meltingEnergy != 0.0) {
+					refreezingEnergy += Math.abs(trapezoidArea);
+				}
+			} else if (temperatureUpper <= 273.15 && temperatureLower > 273.15) {
+				// trapezoidal integration
+				double trapezoidWidthLower = G * ((temperatureLower - T0) / T0);
+				double trapezoidWidthUpper = G * ((temperatureUpper - T0) / T0);
+
+				double freezingPointHeight = linScale(temperatureLower, temperatureUpper, heightLower, heightUpper, T0);
+
+				double avgFreezingTrapezoidWidth = -(0 + trapezoidWidthUpper) / 2;
+				double freezingTrapezoidHeight = heightUpper - freezingPointHeight;
+
+				double freezingTrapezoidArea = avgFreezingTrapezoidWidth * freezingTrapezoidHeight;
+
+				double avgMeltingTrapezoidWidth = (trapezoidWidthLower + 0) / 2;
+				double meltingTrapezoidHeight = freezingPointHeight - heightLower;
+
+				double meltingTrapezoidArea = avgMeltingTrapezoidWidth * meltingTrapezoidHeight;
+				
+//				System.out.println("NA-> trapezoid:  " + freezingTrapezoidArea);
+//				System.out.println("->PA trapezoid:  " + meltingTrapezoidArea);
+//				System.out.println("bourgouin ME:    " + meltingEnergy);
+//				System.out.println("bourgouin RFE:   " + refreezingEnergy);
+//				System.out.println("bourgouin RME    " + remeltingEnergy);
+
+				if (meltingEnergy == 0.0) {
+					meltingEnergy += Math.abs(meltingTrapezoidArea);
+				} else {
+					refreezingEnergy += Math.abs(freezingTrapezoidArea);
+					remeltingEnergy += Math.abs(meltingTrapezoidArea);
+				}
+			} else if (temperatureUpper > 273.15 && temperatureLower <= 273.15) {
+				// trapezoidal integration
+				double trapezoidWidthLower = G * ((temperatureLower - T0) / T0);
+				double trapezoidWidthUpper = G * ((temperatureUpper - T0) / T0);
+
+				double freezingPointHeight = linScale(temperatureLower, temperatureUpper, heightLower, heightUpper, T0);
+
+				double avgFreezingTrapezoidWidth = -(trapezoidWidthLower + 0) / 2;
+				double freezingTrapezoidHeight = freezingPointHeight - heightLower;
+
+				double freezingTrapezoidArea = avgFreezingTrapezoidWidth * freezingTrapezoidHeight;
+
+				double avgMeltingTrapezoidWidth = (0 + trapezoidWidthUpper) / 2;
+				double meltingTrapezoidHeight = heightUpper - freezingPointHeight;
+
+				double meltingTrapezoidArea = avgMeltingTrapezoidWidth * meltingTrapezoidHeight;
+				
+//				System.out.println("PA-> trapezoid:  " + meltingTrapezoidArea);
+//				System.out.println("->NA trapezoid:  " + freezingTrapezoidArea);
+//				System.out.println("bourgouin ME:    " + meltingEnergy);
+//				System.out.println("bourgouin RFE:   " + refreezingEnergy);
+//				System.out.println("bourgouin RME    " + remeltingEnergy);
+
+				if (refreezingEnergy == 0.0) {
+					meltingEnergy += Math.abs(meltingTrapezoidArea);
+					refreezingEnergy += Math.abs(freezingTrapezoidArea);
+				} else {
+					refreezingEnergy += Math.abs(freezingTrapezoidArea);
+					remeltingEnergy += Math.abs(meltingTrapezoidArea);
+				}
+			}
+		}
+		
+//		System.out.println("bourgouin ME:" + meltingEnergy);
+//		System.out.println("bourgouin RFE:" + refreezingEnergy);
+//		System.out.println("bourgouin RME:" + remeltingEnergy);
+		
+		if(remeltingEnergy >= 5.6) {
+			if(remeltingEnergy > 13.2) {
+				return RAIN;
+			} else {
+				return RAIN_SNOW_MIX;
+			}
+		} else if(refreezingEnergy > 0) {
+			if(refreezingEnergy > 66 + 0.66 * meltingEnergy) {
+				return ICE_PELLETS;
+			} else if(refreezingEnergy < 46 + 0.66 * meltingEnergy) {
+				return FREEZING_RAIN;
+			} else {
+				return FRZR_ICEP_MIX;
+			}
+		} else {
+			if(meltingEnergy > 13.2) {
+				return RAIN;
+			} if(meltingEnergy >= 5.6) {
+				return RAIN_SNOW_MIX;
+			} else {
+				return SNOW;
+			}
+		}
+	}
 
 	public static PrecipitationType bourgouinRevisedMethod(double[] pressureLevels, double[] tmpIsobaric,
 			double[] dptIsobaric, double[] hgtIsobaric, double presSurface, double hgtSurface) {
@@ -76,7 +352,7 @@ public class PtypeAlgorithms {
 			return RAIN;
 
 		List<RecordAtLevel> isobaricData = new ArrayList<>();
-		for (int i = 0; i < pressureLevels.length; i++) {
+		for (int i = 0; i < dptIsobaric.length; i++) {
 //			System.out.println("pres: " + pressureLevels[i]);
 //			System.out.println("tmp: " + tmpIsobaric[i]);
 //			System.out.println("dpt: " + dptIsobaric[i]);
@@ -90,7 +366,7 @@ public class PtypeAlgorithms {
 		Collections.sort(isobaricData); // should sort top of atmosphere to start of list, surface to bottom of list
 
 		// effectively removes subsurface records
-		for (int i = 0; i < pressureLevels.length; i++) {
+		for (int i = 0; i < dptIsobaric.length; i++) {
 			double heightAtLevel = isobaricData.get(i).height;
 
 			if (heightAtLevel < hgtSurface) {
@@ -107,14 +383,11 @@ public class PtypeAlgorithms {
 		double initPressureLayer = 50000;
 
 		if (dynamicInitLayer) {
-			// looks for first level with a dewpoint depression less than or equal to 3
-			// kelvins
-			// assumes that's the precip initial layer
-			for (int i = 0; i < pressureLevels.length; i++) {
-				double dewpointDepression = isobaricData.get(i).temperature - isobaricData.get(i).dewpoint;
-//				System.out.println(isobaricData.get(i).pressure/100 + "\t" + dewpointDepression);
-
-				if (dewpointDepression <= 3) {
+			// looks for first level with RH >= 90
+			for (int i = 0; i < dptIsobaric.length; i++) {
+				double rh = WeatherUtils.relativeHumidity(isobaricData.get(i).temperature, isobaricData.get(i).dewpoint);
+				
+				if (rh >= 0.9) {
 					initPressureLayer = isobaricData.get(i).pressure;
 					break;
 				}
@@ -124,7 +397,7 @@ public class PtypeAlgorithms {
 //		System.out.println(initPressureLayer);
 
 		int precipInitIndex = -1;
-		for (int i = 0; i < pressureLevels.length; i++) {
+		for (int i = 0; i < dptIsobaric.length; i++) {
 			if (isobaricData.get(i).pressure >= initPressureLayer) {
 				precipInitIndex = i;
 				break;
@@ -134,7 +407,7 @@ public class PtypeAlgorithms {
 
 		// uses wet-bulb freezing point method if dynamic init layer is used and no
 		// precip layers are detected
-		if (precipInitIndex == -1)
+		if (precipInitIndex == -1 || isobaricData.get(precipInitIndex).height - 3 < hgtSurface)
 			return freezingPointMethod(WeatherUtils.wetBulbTemperature(tmpIsobaric[tmpIsobaric.length - 1],
 					dptIsobaric[dptIsobaric.length - 1], pressureLevels[pressureLevels.length - 1]));
 
@@ -421,7 +694,7 @@ public class PtypeAlgorithms {
 			return RAIN;
 
 		List<RecordAtLevel> isobaricData = new ArrayList<>();
-		for (int i = 0; i < pressureLevels.length; i++) {
+		for (int i = 0; i < dptIsobaric.length; i++) {
 //			System.out.println("pres: " + pressureLevels[i]);
 //			System.out.println("tmp: " + tmpIsobaric[i]);
 //			System.out.println("dpt: " + dptIsobaric[i]);
@@ -435,7 +708,7 @@ public class PtypeAlgorithms {
 		Collections.sort(isobaricData); // should sort top of atmosphere to start of list, surface to bottom of list
 
 		// effectively removes subsurface records
-		for (int i = 0; i < pressureLevels.length; i++) {
+		for (int i = 0; i < dptIsobaric.length; i++) {
 			double heightAtLevel = isobaricData.get(i).height;
 
 			if (heightAtLevel < hgtSurface) {
@@ -452,14 +725,11 @@ public class PtypeAlgorithms {
 		double initPressureLayer = 50000;
 
 		if (dynamicInitLayer) {
-			// looks for first level with a dewpoint depression less than or equal to 3
-			// kelvins
-			// assumes that's the precip initial layer
-			for (int i = 0; i < pressureLevels.length; i++) {
-				double dewpointDepression = isobaricData.get(i).temperature - isobaricData.get(i).dewpoint;
-//				System.out.println(isobaricData.get(i).pressure/100 + "\t" + dewpointDepression);
-
-				if (dewpointDepression <= 3) {
+			// looks for first level with RH >= 90
+			for (int i = 0; i < dptIsobaric.length; i++) {
+				double rh = WeatherUtils.relativeHumidity(isobaricData.get(i).temperature, isobaricData.get(i).dewpoint);
+				
+				if (rh >= 0.9) {
 					initPressureLayer = isobaricData.get(i).pressure;
 					break;
 				}
@@ -469,7 +739,7 @@ public class PtypeAlgorithms {
 //		System.out.println(initPressureLayer);
 
 		int precipInitIndex = -1;
-		for (int i = 0; i < pressureLevels.length; i++) {
+		for (int i = 0; i < dptIsobaric.length; i++) {
 			if (isobaricData.get(i).pressure >= initPressureLayer) {
 				precipInitIndex = i;
 				break;
@@ -479,7 +749,7 @@ public class PtypeAlgorithms {
 
 		// uses wet-bulb freezing point method if dynamic init layer is used and no
 		// precip layers are detected
-		if (precipInitIndex == -1)
+		if (precipInitIndex == -1 || isobaricData.get(precipInitIndex).height - 3 < hgtSurface)
 			return freezingPointMethod(WeatherUtils.wetBulbTemperature(tmpIsobaric[tmpIsobaric.length - 1],
 					dptIsobaric[dptIsobaric.length - 1], pressureLevels[pressureLevels.length - 1]));
 
@@ -753,6 +1023,9 @@ public class PtypeAlgorithms {
 	 * @param tmpIsobaric      All isobaric temperatures of the profile, in Kelvins
 	 * @param dptIsobaric      All isobaric dewpoints of the profile, in Kelvins
 	 * @param hgtIsobaric      All isobaric heights of the profile, in Meters
+	 * @param presSurface      Surface pressure, in Pascals
+	 * @param hgtSurface       Surface height, in Meters
+	 * @param tmpSurface       Surface temperature, in Kelvins
 	 * @param dynamicInitLayer true = find highest level with a dewpoint depression
 	 *                         of 3 K, false = always init at 500 mb
 	 * @return The precipitation type diagnosed by the Bourgouin Revised 2021 Method
@@ -844,6 +1117,266 @@ public class PtypeAlgorithms {
 		}
 
 		return preExtension;
+	}
+
+	/**
+	 * Described in https://journals.ametsoc.org/view/journals/apme/61/9/JAMC-D-21-0202.1.xml?tafloatb_body=pdf
+	 * at Section 2.b.1
+	 * 
+	 * @param pressure         All pressure levels of the profile, in Pascals
+	 * @param height           All isobaric heights of the profile, in Meters
+	 * @param tmp2m            2 m Temperature, in Kelvins
+	 * @param tmpSurface       Surface Temperature, in Kelvins
+	 */
+	public static PrecipitationType cantinBachandMethod(double[] pressure, double[] height, 
+			double tmp2m, double tmpSurface) {
+		double surfacePressure = pressure[pressure.length - 1];
+		
+		double hgt1000mb = logInterp(pressure, height, 100000);
+		double hgt850mb = logInterp(pressure, height, 85000);
+		double hgt700mb = logInterp(pressure, height, 70000);
+		
+		if(surfacePressure < 100000) {
+			hgt1000mb = WeatherUtils.heightAtPressure(surfacePressure, 100000, tmp2m);
+		}
+		
+		if(surfacePressure < 85000) {
+			hgt850mb = WeatherUtils.heightAtPressure(surfacePressure, 85000, tmp2m);
+		}
+		
+		if(surfacePressure < 70000) {
+			hgt700mb = WeatherUtils.heightAtPressure(surfacePressure, 70000, tmp2m);
+		}
+		
+		double thickness1000_850 = hgt850mb - hgt1000mb;
+		double thickness850_700 = hgt700mb - hgt850mb;
+		
+//		for(int i = 0; i < height.length; i++) {
+//			System.out.printf("%6.1f\t%6.0f\n", pressure[i]/100.0, height[i]);
+//		}
+		
+//		System.out.println(surfacePressure);
+//		System.out.println(hgt1000mb);
+//		System.out.println(hgt850mb);
+//		System.out.println(hgt700mb);
+//		System.out.println();
+//		
+//		System.out.println(thickness1000_850);
+//		System.out.println(thickness850_700);
+		
+		if(thickness1000_850 >= 1310) {
+			return PrecipitationType.RAIN;
+		} else if(thickness1000_850 >= 1290) {
+			if(thickness850_700 >= 1540) {
+				if(tmpSurface <= 273.15) {
+					return PrecipitationType.FREEZING_RAIN;
+				} else {
+					return PrecipitationType.RAIN;
+				}
+			} else {
+				return PrecipitationType.SNOW; // confirm in paper
+			}
+		} else {
+			if(thickness850_700 >= 1540) {
+				return PrecipitationType.ICE_PELLETS;
+			} else {
+				return PrecipitationType.SNOW;
+			}
+		}
+	}
+
+	public static PrecipitationType freezingPointMethod(double tmp2m) {
+		if (tmp2m > 273.15) {
+			return RAIN;
+		} else {
+			return SNOW;
+		}
+	}
+
+	/**
+	 * @param pressureLevels   All pressure levels of the profile, in Pascals
+	 * @param tmpIsobaric      All isobaric temperatures of the profile, in Kelvins
+	 * @param dptIsobaric      All isobaric dewpoints of the profile, in Kelvins
+	 * @param hgtIsobaric      All isobaric heights of the profile, in Meters
+	 * @return The precipitation type diagnosed by the Ramer 1993 Method
+	 *         (https://ams.confex.com/ams/pdfpapers/30176.pdf)
+	 */
+	public static PrecipitationType ramerMethod(double[] pressureLevels, double[] tmpIsobaric,
+			double[] dptIsobaric, double[] hgtIsobaric, double presSurface, double hgtSurface) {
+//		System.out.println("start ramer");
+		
+		if (tmpIsobaric[tmpIsobaric.length - 1] >= 283.15) {
+//			System.out.println("sfc >10");
+			return RAIN;
+		}
+
+		List<RecordAtLevel> isobaricData = new ArrayList<>();
+		for (int i = 0; i < dptIsobaric.length; i++) {
+			isobaricData.add(new RecordAtLevel(pressureLevels[i], tmpIsobaric[i], dptIsobaric[i], hgtIsobaric[i]));
+		}
+
+		Collections.sort(isobaricData);
+
+		// effectively removes subsurface records
+		for (int i = 0; i < dptIsobaric.length; i++) {
+			double heightAtLevel = isobaricData.get(i).height;
+
+			if (heightAtLevel < hgtSurface) {
+				isobaricData.get(i).height = hgtSurface;
+				isobaricData.get(i).pressure = presSurface;
+				isobaricData.get(i).temperature = isobaricData.get(i - 1).temperature;
+				isobaricData.get(i).wetbulb = isobaricData.get(i - 1).wetbulb;
+				isobaricData.get(i).dewpoint = isobaricData.get(i - 1).dewpoint;
+			}
+		}
+
+		double initPressureLayer = 50000;
+		
+		for (int i = 0; i < dptIsobaric.length; i++) {
+			double rh = WeatherUtils.relativeHumidity(isobaricData.get(i).temperature, isobaricData.get(i).dewpoint);
+			
+			if (rh >= 0.9) {
+				initPressureLayer = isobaricData.get(i).pressure;
+				break;
+			}
+		}
+
+		if (isobaricData.get(isobaricData.size() - 1).wetbulb > 273.15 + 2) {
+//			System.out.println("sfc >2");
+			return RAIN;
+		}
+
+		int precipInitIndex = -1;
+		for (int i = 0; i < dptIsobaric.length; i++) {
+			if (isobaricData.get(i).pressure >= initPressureLayer) {
+				precipInitIndex = i;
+				break;
+			}
+		}
+		
+		boolean allFreezing = true;
+		for (int i = precipInitIndex; i < isobaricData.size() - 1; i++) {
+			if (isobaricData.get(i).wetbulb > 273.15 - 6.6) {
+				allFreezing = false;
+				break;
+			}
+		}
+		if(allFreezing && isobaricData.get(isobaricData.size() - 1).wetbulb <= 273.15 + 2) {
+//			System.out.println("all freezing");
+			return SNOW;
+		}
+		
+		double hydrometeorIceFraction = 0;
+		if (isobaricData.get(precipInitIndex).getWetbulb() < 273.15 - 6.6) {
+			hydrometeorIceFraction = 1;
+		}
+		
+		double minimumIceFraction = hydrometeorIceFraction;
+		
+		for(int i = precipInitIndex + 1; i < isobaricData.size(); i++) {
+			double wetbulb = isobaricData.get(i).getWetbulb();
+			
+			double temperature = isobaricData.get(i).getTemperature();
+			double dewpoint = isobaricData.get(i).getDewpoint();
+			double rh = WeatherUtils.relativeHumidity(temperature, dewpoint);
+			
+			double pressure1 = isobaricData.get(i - 1).getPressure();
+			double pressure0 = isobaricData.get(i).getPressure();
+			
+			double dLnP = Math.log(pressure0) - Math.log(pressure1);
+			double e = 0.45 * rh;
+			
+			double dI = (273.15 - wetbulb)/e * dLnP;
+			
+			hydrometeorIceFraction += dI;
+			
+			if(hydrometeorIceFraction < 0) {
+				hydrometeorIceFraction = 0;
+			}
+			
+			if(hydrometeorIceFraction > 1) {
+				hydrometeorIceFraction = 1;
+			}
+			
+			minimumIceFraction = Double.min(minimumIceFraction, hydrometeorIceFraction);
+			
+//			System.out.printf("%4.2f\t%4.2f\n", hydrometeorIceFraction, minimumIceFraction);
+		}
+		
+		if(hydrometeorIceFraction > 0.85) {
+			double refreezingFraction = hydrometeorIceFraction - minimumIceFraction;
+			
+			if (refreezingFraction > 0.85) {
+				return ICE_PELLETS;
+			} else if (refreezingFraction >= 0.15) {
+				return ICEP_SNOW_MIX;
+			} else {
+				return SNOW;
+			}
+		} else if(hydrometeorIceFraction > 0.04) {
+			double refreezingFraction = hydrometeorIceFraction - minimumIceFraction;
+			double wbt2m = isobaricData.get(isobaricData.size() - 1).getWetbulb();
+			
+			if (refreezingFraction > minimumIceFraction) {
+				if(wbt2m < 273.15) {
+					return FRZR_ICEP_MIX;
+				} else {
+					return RAIN_ICEP_MIX;
+				}
+			} else {
+				if(wbt2m < 273.15) {
+					return FRZR_SNOW_MIX;
+				} else {
+					return RAIN_SNOW_MIX;
+				}
+			}
+		} else {
+			double wbt2m = isobaricData.get(isobaricData.size() - 1).getWetbulb();
+			
+			if(wbt2m < 273.15) {
+				return FREEZING_RAIN;
+			} else {
+				return RAIN;
+			}
+		}
+	}
+
+	// inputArr assumed to already be sorted and increasing
+	private static double logInterp(double[] inputArr, double[] outputArr, double input) {
+		if (input < inputArr[0]) {
+			return outputArr[0];
+		} else if (input >= inputArr[inputArr.length - 1]) {
+			return outputArr[outputArr.length - 1];
+		} else {
+			for (int i = 0; i < inputArr.length - 1; i++) {
+				if (i + 1 == outputArr.length) {
+					return outputArr[outputArr.length - 1];
+				}
+
+				double input1 = inputArr[i];
+				double input2 = inputArr[i + 1];
+
+				if (input == input1) {
+					return outputArr[i];
+				} else if (input < input2) {
+					double logInput1 = Math.log(input1);
+					double logInput2 = Math.log(input2);
+					double logInput = Math.log(input);
+
+					double output1 = outputArr[i];
+					double output2 = outputArr[i + 1];
+
+					double weight1 = (logInput2 - logInput) / (logInput2 - logInput1);
+					double weight2 = (logInput - logInput1) / (logInput2 - logInput1);
+
+					return output1 * weight1 + output2 * weight2;
+				} else {
+					continue;
+				}
+			}
+
+			return -1024.0;
+		}
 	}
 
 	private static double linScale(double preMin, double preMax, double postMin, double postMax, double value) {
