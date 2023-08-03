@@ -694,7 +694,7 @@ public class WeatherUtils {
 		double levelOfFreeConvection = levelOfFreeConvection(envPressure, envTemperature, envDewpoint, parcelPressure,
 				parcelHeight, parcelTemperature, parcelDewpoint);
 
-		for (int i = 0; i < parcelPressure.length; i++) {
+		for (int i = 0; i < parcelPressure.length - 1; i++) {
 			double pPres = parcelPressure[i];
 			double height = parcelHeight[i];
 
