@@ -146,6 +146,15 @@ public class WeatherUtils {
 
 		return mixingRatio;
 	}
+	
+	public static double moistStaticEnergy(double temperature, double dewpoint, double height, double pressure) {
+		double vaporPressure = WeatherUtils.vaporPressure(dewpoint);
+		double specificHumidity = WeatherUtils.specificHumidity(pressure, vaporPressure, temperature);
+		
+		double moistStaticEnergy = specificHeatCapacityDryAir * temperature + latentHeatOfVaporization * specificHumidity + gravAccel * height;
+		
+		return moistStaticEnergy;
+	}
 
 	private static final double REFERENCE_PRESSURE = 100000; // Pascals
 
@@ -864,9 +873,13 @@ public class WeatherUtils {
 	}
 
 	/**
-	 * Computes the convective parcel path. Entrainment cape not yet implemented
-	 * because I either haven't found or haven't read the study that derived it.
+	 * Computes the convective parcel path.
 	 * 
+	 * If entrainment is turned on, assumes a constant entrainment rate of 0.00001 m^-1.
+	 * Not accurate to the study, but a fairly good approximation.
+	 * 
+	 * Also entrains air based on temperature and mixing ratio rather than moist static energy as in the study.
+	 * Unsure if equivalent to the study.
 	 * 
 	 * @param pressure    Units: array of Pascals
 	 * @param temperature Units: array of Kelvins
@@ -877,6 +890,11 @@ public class WeatherUtils {
 	public static ArrayList<RecordAtLevel> computeParcelPath(double[] pressure, double[] temperature, double[] dewpoint,
 			ParcelPath pathType, boolean doEntrainment) {
 		ArrayList<RecordAtLevel> parcelPath = new ArrayList<>();
+		
+		double entrainmentRate = 0.0;
+		if(doEntrainment) {
+			entrainmentRate = 0.00006; // m^-1
+		}
 
 		final double ITER_HEIGHT_CHANGE = 20; // change per iteration
 
@@ -928,13 +946,31 @@ public class WeatherUtils {
 			parcelPressure = WeatherUtils.pressureAtHeight(parcelPressure, ITER_HEIGHT_CHANGE, parcelTemperature);
 			height += ITER_HEIGHT_CHANGE;
 
+			double ePres = parcelPressure;
+			double eTemp = logInterp(pressure, temperature, ePres);
+			double eDwpt = logInterp(pressure, dewpoint, ePres);
+
 			if (parcelDewpoint >= parcelTemperature) {
-				parcelTemperature -= WeatherUtils.moistAdiabaticLapseRate(parcelTemperature, parcelPressure)
+				parcelTemperature -= moistAdiabaticLapseRate(parcelTemperature, parcelPressure)
 						* ITER_HEIGHT_CHANGE;
+
+				double envWetBulb = wetBulbTemperature(eTemp, eDwpt, ePres);
+				parcelTemperature += -entrainmentRate * (parcelTemperature - envWetBulb) * ITER_HEIGHT_CHANGE;
+				
 				parcelDewpoint = parcelTemperature;
 			} else {
 				parcelTemperature -= dryAdiabaticLapseRate * ITER_HEIGHT_CHANGE;
 				parcelDewpoint -= dewpointLapseRate * ITER_HEIGHT_CHANGE;
+				
+				double parcelMixingRatio = mixingRatio(parcelPressure, parcelDewpoint);
+				double envMixingRatio = mixingRatio(ePres, eDwpt);
+				
+				parcelTemperature += -entrainmentRate * (parcelTemperature - eTemp) * ITER_HEIGHT_CHANGE;
+				parcelMixingRatio += -entrainmentRate * (parcelMixingRatio - envMixingRatio) * ITER_HEIGHT_CHANGE;
+
+				double parcelVaporPressure = (parcelPressure * parcelMixingRatio) / (0.62197 + parcelMixingRatio);
+				parcelDewpoint = 1 / (1 / 273.15
+						- (waterVaporGasConstant / latentHeatOfVaporization * Math.log(parcelVaporPressure / 611)));
 			}
 
 			RecordAtLevel record = new RecordAtLevel(parcelPressure, parcelTemperature, parcelDewpoint, height);
@@ -1021,6 +1057,11 @@ public class WeatherUtils {
 		ArrayList<RecordAtLevel> parcelPath = new ArrayList<>();
 
 		final double ITER_HEIGHT_CHANGE = 20; // change per iteration
+		
+		double entrainmentRate = 0.0;
+		if(doEntrainment) {
+			entrainmentRate = 0.00006; // m^-1
+		}
 
 		double height = 0;
 
@@ -1098,13 +1139,31 @@ public class WeatherUtils {
 			parcelPressure = WeatherUtils.pressureAtHeight(parcelPressure, ITER_HEIGHT_CHANGE, parcelTemperature);
 			height += ITER_HEIGHT_CHANGE;
 
+			double ePres = parcelPressure;
+			double eTemp = logInterp(pressure, temperature, ePres);
+			double eDwpt = logInterp(pressure, dewpoint, ePres);
+
 			if (parcelDewpoint >= parcelTemperature) {
-				parcelTemperature -= WeatherUtils.moistAdiabaticLapseRate(parcelTemperature, parcelPressure)
+				parcelTemperature -= moistAdiabaticLapseRate(parcelTemperature, parcelPressure)
 						* ITER_HEIGHT_CHANGE;
+
+				double envWetBulb = wetBulbTemperature(eTemp, eDwpt, ePres);
+				parcelTemperature += -entrainmentRate * (parcelTemperature - envWetBulb) * ITER_HEIGHT_CHANGE;
+				
 				parcelDewpoint = parcelTemperature;
 			} else {
 				parcelTemperature -= dryAdiabaticLapseRate * ITER_HEIGHT_CHANGE;
 				parcelDewpoint -= dewpointLapseRate * ITER_HEIGHT_CHANGE;
+				
+				double parcelMixingRatio = mixingRatio(parcelPressure, parcelDewpoint);
+				double envMixingRatio = mixingRatio(ePres, eDwpt);
+				
+				parcelTemperature += -entrainmentRate * (parcelTemperature - eTemp) * ITER_HEIGHT_CHANGE;
+				parcelMixingRatio += -entrainmentRate * (parcelMixingRatio - envMixingRatio) * ITER_HEIGHT_CHANGE;
+
+				double parcelVaporPressure = (parcelPressure * parcelMixingRatio) / (0.62197 + parcelMixingRatio);
+				parcelDewpoint = 1 / (1 / 273.15
+						- (waterVaporGasConstant / latentHeatOfVaporization * Math.log(parcelVaporPressure / 611)));
 			}
 
 			RecordAtLevel record = new RecordAtLevel(parcelPressure, parcelTemperature, parcelDewpoint, height);
