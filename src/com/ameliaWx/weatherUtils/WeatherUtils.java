@@ -37,6 +37,9 @@ public class WeatherUtils {
 	/** Units: m s^-2 */
 	public static final double gravAccel = 9.81;
 
+	/** Units: W m^-2 K^-4 */
+	public static final double stefanBoltzmannConstant = 0.00000005670374419;
+
 	/**
 	 * Computes the partial density of water vapor, also called absolute humidity.
 	 * 
@@ -119,7 +122,8 @@ public class WeatherUtils {
 	}
 
 	/**
-	 * Computes height above sea level at a given pressure. Takes a temperature to estimate scale height.
+	 * Computes height above sea level at a given pressure. Takes a temperature to
+	 * estimate scale height.
 	 * 
 	 * @param seaLevelPres  Units: Pascals
 	 * @param pressureAtAlt Units: Pascals
@@ -146,13 +150,14 @@ public class WeatherUtils {
 
 		return mixingRatio;
 	}
-	
+
 	public static double moistStaticEnergy(double temperature, double dewpoint, double height, double pressure) {
 		double vaporPressure = WeatherUtils.vaporPressure(dewpoint);
 		double specificHumidity = WeatherUtils.specificHumidity(pressure, vaporPressure, temperature);
-		
-		double moistStaticEnergy = specificHeatCapacityDryAir * temperature + latentHeatOfVaporization * specificHumidity + gravAccel * height;
-		
+
+		double moistStaticEnergy = specificHeatCapacityDryAir * temperature
+				+ latentHeatOfVaporization * specificHumidity + gravAccel * height;
+
 		return moistStaticEnergy;
 	}
 
@@ -385,6 +390,125 @@ public class WeatherUtils {
 	 * Section 2 --- Equivalent to PhysMet.cpp in C++ version of the library
 	 */
 
+	public static final double boltzmannConstant = 1.380649 * Math.pow(10, -23);
+	public static final double planckConstant = 6.6260701 * Math.pow(10, -34);
+	public static final double speedOfLight = 2.99792 * Math.pow(10, 8);
+
+	/**
+	 * Computes the radiative flux according to the Stefan-Boltzmann law
+	 * 
+	 * @param temperature Units: Kelvins
+	 * @param emissivity  Units: Fraction
+	 * @return <b>radiativeFlux</b> Units: W m^-2
+	 */
+	public static double radiativeFlux(double temperature, double emissivity) {
+		double radiativeFlux = stefanBoltzmannConstant * emissivity * Math.pow(temperature, 4);
+
+		return radiativeFlux;
+	}
+
+	/**
+	 * Computes the blackbody radiative flux according to the Stefan-Boltzmann law
+	 * 
+	 * @param temperature Units: Kelvins
+	 * @param emissivity  Units: Fraction
+	 * @return <b>radiativeFlux</b> Units: W m^-2
+	 */
+	public static double blackbodyRadiativeFlux(double temperature) {
+		double radiativeFlux = stefanBoltzmannConstant * Math.pow(temperature, 4);
+
+		return radiativeFlux;
+	}
+
+	/**
+	 * Computes the brightness temperature from spectral radiance at a given
+	 * wavelength according to Planck's Law. Does not account for band width.
+	 * 
+	 * Be careful with units, GOES-16 data comes in units of [W m^-2 sr^-1 um^-1].
+	 * It must be multiplied by 1000000 to be converted to the appropriate units.
+	 * Frequency is in meters, NOT micrometers
+	 * 
+	 * @param spectralRadiance Units: W m^-2 sr^-1 m^-1
+	 * @param wavelength       Units: Meters
+	 * @return Units: Kelvins
+	 */
+	public static double brightnessTemperatureFromWavelength(double spectralRadiance, double wavelength) {
+		return brightnessTemperatureFromWavelength(spectralRadiance, wavelength, 1);
+	}
+
+	/**
+	 * Computes the brightness temperature from spectral radiance at a given
+	 * wavelength according to Planck's Law. Does not account for band width.
+	 * 
+	 * Be careful with units, GOES-16 data comes in units of [W m^-2 sr^-1 um^-1].
+	 * It must be multiplied by 1000000 to be converted to the appropriate units.
+	 * Wavelength is in meters, NOT micrometers
+	 * 
+	 * @param spectralRadiance Units: W m^-2 sr^-1 m^-1
+	 * @param wavelength       Units: Meters
+	 * @param emissivity       Units: Fraction
+	 * @return Units: Kelvins
+	 */
+	public static double brightnessTemperatureFromWavelength(double spectralRadiance, double wavelength,
+			double emissivity) {
+		double blackbodyEquivalentSpectralRadiance = spectralRadiance / emissivity;
+
+		return (planckConstant * speedOfLight) / (wavelength * boltzmannConstant
+				* Math.log((2 * planckConstant * speedOfLight * speedOfLight) / (wavelength * wavelength * wavelength
+						* wavelength * wavelength * blackbodyEquivalentSpectralRadiance) + 1));
+	}
+
+	/**
+	 * Computes the brightness temperature from spectral radiance at a given
+	 * wavelength according to Planck's Law. Does not account for band width.
+	 * 
+	 * Be careful with units, GOES-16 data comes in units of [W m^-2 sr^-1 um^-1].
+	 * It must be multiplied by 1000000 to be converted to the appropriate units.
+	 * Wavelength is in meters, NOT micrometers
+	 * 
+	 * @param spectralRadiance Units: W m^-2 sr^-1 (m^-1)^-1
+	 * @param wavenumber       Units: m^-1
+	 * @return Units: Kelvins
+	 */
+	public static double brightnessTemperatureFromWavenumber(double spectralRadiance, double wavenumber) {
+		return brightnessTemperatureFromWavenumber(spectralRadiance, wavenumber, 1);
+	}
+
+	/**
+	 * Computes the brightness temperature from spectral radiance at a given
+	 * wavelength according to Planck's Law. Does not account for band width.
+	 * 
+	 * Be careful with units, GOES-16 data comes in units of [mW m^-2 sr^-1
+	 * (cm^-1)^-1]. It must be divided by 100000 to be converted to the appropriate
+	 * units. Wavenumber
+	 * 
+	 * @param spectralRadiance Units: W m^-2 sr^-1 (m^-1)^-1
+	 * @param wavenumber       Units: m^-1
+	 * @param emissivity       Units: Fraction
+	 * @return Units: Kelvins
+	 */
+	public static double brightnessTemperatureFromWavenumber(double spectralRadiance, double wavenumber,
+			double emissivity) {
+		double blackbodyEquivalentSpectralRadiance = spectralRadiance / emissivity;
+
+		double numerator = (planckConstant * speedOfLight * wavenumber);
+		double denominator = (boltzmannConstant
+				* Math.log((2 * planckConstant * speedOfLight * speedOfLight * wavenumber * wavenumber * wavenumber)
+						/ (blackbodyEquivalentSpectralRadiance) + 1));
+
+		return numerator / denominator;
+	}
+
+	/**
+	 * Computes the wavenumber of a light wave given a wavelength
+	 * 
+	 * @param wavelength
+	 * @return
+	 */
+	public static double wavelengthToWavenumber(double wavelength) {
+		return 1 / wavelength;
+	}
+
 	/**
 	 * Section 3 --- Equivalent to Kinematics.cpp in C++ version of the library
 	 */
@@ -590,22 +714,6 @@ public class WeatherUtils {
 	}
 
 	/**
-	 * Computes ML50CAPE given an environmental sounding Assumes that all arrays are
-	 * sorted in order of increasing pressure.
-	 * 
-	 * @param envPressure    Units: array of Pascals
-	 * @param envTemperature Units: array of Kelvins
-	 * @param envDewpoint    Units: array of Kelvins
-	 * @return <b>potentialEnergy</b> Units: J kg^-1
-	 */
-	public static double computeMl50cape(double[] envPressure, double[] envTemperature, double[] envDewpoint) {
-		ArrayList<RecordAtLevel> parcelPath = computeParcelPath(envPressure, envTemperature, envDewpoint,
-				ParcelPath.MIXED_LAYER_50MB, false);
-
-		return computeCape(envPressure, envTemperature, envDewpoint, parcelPath);
-	}
-
-	/**
 	 * Computes ML100CAPE given an environmental sounding Assumes that all arrays
 	 * are sorted in order of increasing pressure.
 	 * 
@@ -651,6 +759,24 @@ public class WeatherUtils {
 	public static double computeMucape(double[] envPressure, double[] envTemperature, double[] envDewpoint) {
 		ArrayList<RecordAtLevel> parcelPath = computeParcelPath(envPressure, envTemperature, envDewpoint,
 				ParcelPath.MOST_UNSTABLE, false);
+
+		return computeCape(envPressure, envTemperature, envDewpoint, parcelPath);
+	}
+
+	/**
+	 * Computes ILCAPE (inflow layer cape) given an environmental sounding Assumes that all arrays are
+	 * sorted in order of increasing pressure.
+	 * 
+	 * @param envPressure     Units: array of Pascals
+	 * @param envTemperature  Units: array of Kelvins
+	 * @param envDewpoint     Units: array of Kelvins
+	 * @param mixedLayerDepth Units: Pascals
+	 * @return <b>potentialEnergy</b> Units: J kg^-1
+	 */
+	public static double computeIlcape(double[] envPressure, double[] envHeight, double[] envTemperature, double[] envDewpoint,
+			double mixedLayerDepth) {
+		ArrayList<RecordAtLevel> parcelPath = computeInflowLayerParcelPath(envPressure, envHeight, envTemperature, 
+				envDewpoint, false);
 
 		return computeCape(envPressure, envTemperature, envDewpoint, parcelPath);
 	}
@@ -761,22 +887,6 @@ public class WeatherUtils {
 	}
 
 	/**
-	 * Computes ML50CINH given an environmental sounding Assumes that all arrays are
-	 * sorted in order of increasing pressure.
-	 * 
-	 * @param envPressure    Units: array of Pascals
-	 * @param envTemperature Units: array of Kelvins
-	 * @param envDewpoint    Units: array of Kelvins
-	 * @return <b>potentialEnergy</b> Units: J kg^-1
-	 */
-	public static double computeMl50cinh(double[] envPressure, double[] envTemperature, double[] envDewpoint) {
-		ArrayList<RecordAtLevel> parcelPath = computeParcelPath(envPressure, envTemperature, envDewpoint,
-				ParcelPath.MIXED_LAYER_50MB, false);
-
-		return computeCinh(envPressure, envTemperature, envDewpoint, parcelPath);
-	}
-
-	/**
 	 * Computes ML100CINH given an environmental sounding Assumes that all arrays
 	 * are sorted in order of increasing pressure.
 	 * 
@@ -824,6 +934,24 @@ public class WeatherUtils {
 				ParcelPath.MOST_UNSTABLE, false);
 
 		return computeCinh(envPressure, envTemperature, envDewpoint, parcelPath);
+	}
+
+	/**
+	 * Computes ILCINH (inflow layer cinh) given an environmental sounding Assumes that all arrays are
+	 * sorted in order of increasing pressure.
+	 * 
+	 * @param envPressure     Units: array of Pascals
+	 * @param envTemperature  Units: array of Kelvins
+	 * @param envDewpoint     Units: array of Kelvins
+	 * @param mixedLayerDepth Units: Pascals
+	 * @return <b>potentialEnergy</b> Units: J kg^-1
+	 */
+	public static double computeIlcinh(double[] envPressure, double[] envHeight, double[] envTemperature, double[] envDewpoint,
+			double mixedLayerDepth) {
+		ArrayList<RecordAtLevel> parcelPath = computeInflowLayerParcelPath(envPressure, envHeight, envTemperature, 
+				envDewpoint, false);
+
+		return computeCape(envPressure, envTemperature, envDewpoint, parcelPath);
 	}
 
 	/**
@@ -875,11 +1003,11 @@ public class WeatherUtils {
 	/**
 	 * Computes the convective parcel path.
 	 * 
-	 * If entrainment is turned on, assumes a constant entrainment rate of 0.00001 m^-1.
-	 * Not accurate to the study, but a fairly good approximation.
+	 * If entrainment is turned on, assumes a constant entrainment rate of 0.00001
+	 * m^-1. Not accurate to the study, but a fairly good approximation.
 	 * 
-	 * Also entrains air based on temperature and mixing ratio rather than moist static energy as in the study.
-	 * Unsure if equivalent to the study.
+	 * Also entrains air based on temperature and mixing ratio rather than moist
+	 * static energy as in the study. Unsure if equivalent to the study.
 	 * 
 	 * @param pressure    Units: array of Pascals
 	 * @param temperature Units: array of Kelvins
@@ -890,9 +1018,9 @@ public class WeatherUtils {
 	public static ArrayList<RecordAtLevel> computeParcelPath(double[] pressure, double[] temperature, double[] dewpoint,
 			ParcelPath pathType, boolean doEntrainment) {
 		ArrayList<RecordAtLevel> parcelPath = new ArrayList<>();
-		
+
 		double entrainmentRate = 0.0;
-		if(doEntrainment) {
+		if (doEntrainment) {
 			entrainmentRate = 0.00006; // m^-1
 		}
 
@@ -911,8 +1039,6 @@ public class WeatherUtils {
 			parcelDewpoint = dewpoint[dewpoint.length - 1];
 
 			break;
-		case MIXED_LAYER_50MB:
-			return computeMixedLayerParcelPath(pressure, temperature, dewpoint, 5000, doEntrainment);
 		case MIXED_LAYER_100MB:
 			return computeMixedLayerParcelPath(pressure, temperature, dewpoint, 10000, doEntrainment);
 		case MOST_UNSTABLE:
@@ -935,6 +1061,8 @@ public class WeatherUtils {
 			parcelPressure = pressure[maxThetaEIndex];
 			parcelTemperature = temperature[maxThetaEIndex];
 			parcelDewpoint = dewpoint[maxThetaEIndex];
+		default:
+			break;
 		}
 
 		{
@@ -951,20 +1079,19 @@ public class WeatherUtils {
 			double eDwpt = logInterp(pressure, dewpoint, ePres);
 
 			if (parcelDewpoint >= parcelTemperature) {
-				parcelTemperature -= moistAdiabaticLapseRate(parcelTemperature, parcelPressure)
-						* ITER_HEIGHT_CHANGE;
+				parcelTemperature -= moistAdiabaticLapseRate(parcelTemperature, parcelPressure) * ITER_HEIGHT_CHANGE;
 
 				double envWetBulb = wetBulbTemperature(eTemp, eDwpt, ePres);
 				parcelTemperature += -entrainmentRate * (parcelTemperature - envWetBulb) * ITER_HEIGHT_CHANGE;
-				
+
 				parcelDewpoint = parcelTemperature;
 			} else {
 				parcelTemperature -= dryAdiabaticLapseRate * ITER_HEIGHT_CHANGE;
 				parcelDewpoint -= dewpointLapseRate * ITER_HEIGHT_CHANGE;
-				
+
 				double parcelMixingRatio = mixingRatio(parcelPressure, parcelDewpoint);
 				double envMixingRatio = mixingRatio(ePres, eDwpt);
-				
+
 				parcelTemperature += -entrainmentRate * (parcelTemperature - eTemp) * ITER_HEIGHT_CHANGE;
 				parcelMixingRatio += -entrainmentRate * (parcelMixingRatio - envMixingRatio) * ITER_HEIGHT_CHANGE;
 
@@ -1057,9 +1184,9 @@ public class WeatherUtils {
 		ArrayList<RecordAtLevel> parcelPath = new ArrayList<>();
 
 		final double ITER_HEIGHT_CHANGE = 20; // change per iteration
-		
+
 		double entrainmentRate = 0.0;
-		if(doEntrainment) {
+		if (doEntrainment) {
 			entrainmentRate = 0.00006; // m^-1
 		}
 
@@ -1144,20 +1271,152 @@ public class WeatherUtils {
 			double eDwpt = logInterp(pressure, dewpoint, ePres);
 
 			if (parcelDewpoint >= parcelTemperature) {
-				parcelTemperature -= moistAdiabaticLapseRate(parcelTemperature, parcelPressure)
-						* ITER_HEIGHT_CHANGE;
+				parcelTemperature -= moistAdiabaticLapseRate(parcelTemperature, parcelPressure) * ITER_HEIGHT_CHANGE;
 
 				double envWetBulb = wetBulbTemperature(eTemp, eDwpt, ePres);
 				parcelTemperature += -entrainmentRate * (parcelTemperature - envWetBulb) * ITER_HEIGHT_CHANGE;
-				
+
 				parcelDewpoint = parcelTemperature;
 			} else {
 				parcelTemperature -= dryAdiabaticLapseRate * ITER_HEIGHT_CHANGE;
 				parcelDewpoint -= dewpointLapseRate * ITER_HEIGHT_CHANGE;
-				
+
 				double parcelMixingRatio = mixingRatio(parcelPressure, parcelDewpoint);
 				double envMixingRatio = mixingRatio(ePres, eDwpt);
-				
+
+				parcelTemperature += -entrainmentRate * (parcelTemperature - eTemp) * ITER_HEIGHT_CHANGE;
+				parcelMixingRatio += -entrainmentRate * (parcelMixingRatio - envMixingRatio) * ITER_HEIGHT_CHANGE;
+
+				double parcelVaporPressure = (parcelPressure * parcelMixingRatio) / (0.62197 + parcelMixingRatio);
+				parcelDewpoint = 1 / (1 / 273.15
+						- (waterVaporGasConstant / latentHeatOfVaporization * Math.log(parcelVaporPressure / 611)));
+			}
+
+			RecordAtLevel record = new RecordAtLevel(parcelPressure, parcelTemperature, parcelDewpoint, height);
+			parcelPath.add(record);
+		}
+
+		return parcelPath;
+	}
+
+	/**
+	 * Computes the mixed-layer convective parcel path. Entrainment cape not yet
+	 * implemented because I either haven't found or haven't read the study that
+	 * derived it.
+	 * 
+	 * 
+	 * @param pressure        Units: array of Pascals
+	 * @param temperature     Units: array of Kelvins
+	 * @param dewpoint        Units: array of Kelvins
+	 * @param mixedLayerDepth Units: Pascals
+	 * @return <b>parcelPath</b> RecordAtLevel {pressure: Pascals, temperature:
+	 *         Kelvins, wetbulb: Kelvins, dewpoint: Kelvins, height: Meters}
+	 */
+	public static ArrayList<RecordAtLevel> computeInflowLayerParcelPath(double[] pressure, double[] heightArr, double[] temperature,
+			double[] dewpoint, boolean doEntrainment) {
+		ArrayList<RecordAtLevel> parcelPath = new ArrayList<>();
+
+		final double ITER_HEIGHT_CHANGE = 20; // change per iteration
+
+		double entrainmentRate = 0.0;
+		if (doEntrainment) {
+			entrainmentRate = 0.00006; // m^-1
+		}
+
+		double height = 0;
+
+		double parcelPressure = -1024.0;
+		double parcelTemperature = -1024.0;
+		double parcelDewpoint = -1024.0;
+
+		double[] potentialTemperature = new double[dewpoint.length];
+		double[] mixingRatio = new double[dewpoint.length];
+
+		for (int i = 0; i < dewpoint.length; i++) {
+			potentialTemperature[i] = WeatherUtils.potentialTemperature(temperature[i], pressure[i]);
+			mixingRatio[i] = WeatherUtils.mixingRatio(pressure[i], dewpoint[i]);
+		}
+
+		double[] inflowLayer = effectiveInflowLayerPressure(pressure, heightArr, temperature, dewpoint);
+		
+		double topOfInflowLayer = inflowLayer[1];
+		double bottomOfInflowLayer = inflowLayer[0];
+
+		// computes the starting mixed-layer parcel
+		double averageThetaSum = 0.0;
+		double averageMixingRatioSum = 0.0;
+		double weightSum = 0.0;
+
+		for (int i = dewpoint.length - 1; i > 0; i--) {
+			double pressure1 = pressure[i];
+			double theta1 = potentialTemperature[i];
+			double mixingRatio1 = mixingRatio[i];
+
+			double pressure2 = pressure[i - 1];
+			double theta2 = potentialTemperature[i - 1];
+			double mixingRatio2 = mixingRatio[i - 1];
+
+			if (pressure2 > topOfInflowLayer && pressure2 <= bottomOfInflowLayer) {
+				double weight = (pressure1 - pressure2) / 100.0;
+
+				averageThetaSum += weight * (theta1 + theta2) / 2.0;
+				averageMixingRatioSum += weight * (mixingRatio1 + mixingRatio2) / 2.0;
+				weightSum += weight;
+
+				double averageTheta = averageThetaSum / weightSum;
+				double averageMixingRatio = averageMixingRatioSum / weightSum;
+
+//				System.out.println("i:\t" + i);
+//				System.out.println("theta:\t" + ((theta1 + theta2) / 2.0) + " K");
+//				System.out.println("avgTht:\t" + (averageTheta) + " K");
+//				System.out.println("w:\t" + (mixingRatio1 + mixingRatio2) / 2.0 + " g g^-1");
+//				System.out.println("avg_w:\t" + averageMixingRatio + " g g^-1");
+			}
+		}
+
+		double averageTheta = averageThetaSum / weightSum;
+		double averageMixingRatio = averageMixingRatioSum / weightSum;
+
+//		System.out.println("theta:\t" + (averageTheta) + " K");
+//		System.out.println("w:\t" + averageMixingRatio + " g g^-1");
+
+		parcelPressure = bottomOfInflowLayer;
+		parcelTemperature = averageTheta / Math.pow(100000 / parcelPressure, 0.286);
+		double averageVaporPressure = (parcelPressure * averageMixingRatio) / (0.62197 + averageMixingRatio);
+		parcelDewpoint = 1 / (1 / 273.15
+				- (waterVaporGasConstant / latentHeatOfVaporization * Math.log(averageVaporPressure / 611)));
+
+//		System.out.println(parcelPressure / 100.0 + " mb");
+//		System.out.println(parcelTemperature - 273.15 + " C");
+//		System.out.println(parcelDewpoint - 273.15 + " C");
+
+		{
+			RecordAtLevel record = new RecordAtLevel(parcelPressure, parcelTemperature, parcelDewpoint, height);
+			parcelPath.add(record);
+		}
+
+		while (parcelPressure > 10000) {
+			parcelPressure = WeatherUtils.pressureAtHeight(parcelPressure, ITER_HEIGHT_CHANGE, parcelTemperature);
+			height += ITER_HEIGHT_CHANGE;
+
+			double ePres = parcelPressure;
+			double eTemp = logInterp(pressure, temperature, ePres);
+			double eDwpt = logInterp(pressure, dewpoint, ePres);
+
+			if (parcelDewpoint >= parcelTemperature) {
+				parcelTemperature -= moistAdiabaticLapseRate(parcelTemperature, parcelPressure) * ITER_HEIGHT_CHANGE;
+
+				double envWetBulb = wetBulbTemperature(eTemp, eDwpt, ePres);
+				parcelTemperature += -entrainmentRate * (parcelTemperature - envWetBulb) * ITER_HEIGHT_CHANGE;
+
+				parcelDewpoint = parcelTemperature;
+			} else {
+				parcelTemperature -= dryAdiabaticLapseRate * ITER_HEIGHT_CHANGE;
+				parcelDewpoint -= dewpointLapseRate * ITER_HEIGHT_CHANGE;
+
+				double parcelMixingRatio = mixingRatio(parcelPressure, parcelDewpoint);
+				double envMixingRatio = mixingRatio(ePres, eDwpt);
+
 				parcelTemperature += -entrainmentRate * (parcelTemperature - eTemp) * ITER_HEIGHT_CHANGE;
 				parcelMixingRatio += -entrainmentRate * (parcelMixingRatio - envMixingRatio) * ITER_HEIGHT_CHANGE;
 
@@ -1320,8 +1579,8 @@ public class WeatherUtils {
 	}
 
 	/**
-	 * Computes the Corfidi Downshear vector, which estimates the motion of a
-	 * bow echo MCS propelled by a cold pool.
+	 * Computes the Corfidi Downshear vector, which estimates the motion of a bow
+	 * echo MCS propelled by a cold pool.
 	 * 
 	 * Assumes all arrays are sorted in order of increasing pressure.
 	 * 
@@ -1354,7 +1613,8 @@ public class WeatherUtils {
 
 		double[] coldPoolRelativeFlow = corfidiUpshear(pressure, height, temperature, dewpoint, uWind, vWind);
 
-		return new double[] { meanWindStormMotion[0] + coldPoolRelativeFlow[0], meanWindStormMotion[1] + coldPoolRelativeFlow[1] };
+		return new double[] { meanWindStormMotion[0] + coldPoolRelativeFlow[0],
+				meanWindStormMotion[1] + coldPoolRelativeFlow[1] };
 	}
 
 	/**
@@ -1582,6 +1842,78 @@ public class WeatherUtils {
 						continue;
 					} else {
 						double hgtAtLayer = truncEnvHeight[truncEnvHeight.length - 1] - envHeight[envHeight.length - 1];
+
+						inflowLayer[1] = hgtAtLayer;
+
+						return inflowLayer;
+					}
+				}
+			}
+
+			// statement should never be reached, is present so code will compile
+			return inflowLayer;
+		}
+	}
+
+	/**
+	 * Computes the effective inflow layer given an environmental sounding.
+	 * 
+	 * Reference: https://www.spc.noaa.gov/exper/soundings/help/effective.html
+	 * 
+	 * @param envPressure    Units: array of Pascals
+	 * @param envTemperature Units: array of Kelvins
+	 * @param envDewpoint    Units: array of Kelvins
+	 * @return <b>inflowLayer</b> Units: array of Pascals, first entry: lower limit,
+	 *         second entry: upper limit
+	 */
+	public static double[] effectiveInflowLayerPressure(double[] envPressure, double[] envHeight, double[] envTemperature,
+			double[] envDewpoint) {
+		double[] inflowLayer = new double[2];
+
+		double mucape = computeMucape(envPressure, envTemperature, envDewpoint); // J kg^-1
+		double mucinh = computeMucinh(envPressure, envTemperature, envDewpoint); // J kg^-1
+
+//		double surfacePressure = envPressure[envPressure.length - 1]; // Pascals
+
+//		System.out.println("WeatherUtils::effectiveInflowLayer() - MUCAPE " + (int) (mucape) + " J kg^-1");
+//		System.out.println("WeatherUtils::effectiveInflowLayer() - MUCINH " + (int) (mucinh) + " J kg^-1");
+
+		// checking to make sure there is enough CAPE to create an inflow layer
+		if (mucape <= 100 || mucinh <= -250) {
+			inflowLayer[0] = -1024.0;
+			inflowLayer[1] = -1024.0;
+
+			return inflowLayer;
+		} else {
+			boolean foundBottomOfLayer = false;
+
+			for (int i = envDewpoint.length - 1; i >= 1; i--) {
+				double[] truncEnvPressure = truncateArray(envPressure, i + 1);
+				double[] truncEnvTemperature = truncateArray(envTemperature, i + 1);
+				double[] truncEnvDewpoint = truncateArray(envDewpoint, i + 1);
+
+//				System.out.println("WeatherUtils::effectiveInflowLayer() - doing CAPE at " + truncEnvPressure[truncEnvPressure.length - 1]/100.0 + " mb");
+
+				// a little messy but should get the job done right with low effort
+				double capeAtLevel = computeSbcape(truncEnvPressure, truncEnvTemperature, truncEnvDewpoint);
+				double cinhAtLevel = computeSbcinh(truncEnvPressure, truncEnvTemperature, truncEnvDewpoint);
+
+//				System.out.printf("%4d\t%4d\t", (int) capeAtLevel, (int) cinhAtLevel);
+//				System.out.println(foundBottomOfLayer);
+
+				if (capeAtLevel > 100 && cinhAtLevel > -250) {
+					if (!foundBottomOfLayer) {
+						double hgtAtLayer = truncEnvPressure[truncEnvPressure.length - 1];
+
+						inflowLayer[0] = hgtAtLayer;
+
+						foundBottomOfLayer = true;
+					}
+				} else {
+					if (!foundBottomOfLayer) {
+						continue;
+					} else {
+						double hgtAtLayer = truncEnvPressure[truncEnvPressure.length - 1];
 
 						inflowLayer[1] = hgtAtLayer;
 
@@ -2852,8 +3184,8 @@ public class WeatherUtils {
 	}
 
 	/**
-	 * Section 5 - Winter Weather Meteorology Equivalent to WinterWxMet.cpp in C++ version
-	 * of the library
+	 * Section 5 - Winter Weather Meteorology Equivalent to WinterWxMet.cpp in C++
+	 * version of the library
 	 */
 
 	/**
@@ -2877,24 +3209,24 @@ public class WeatherUtils {
 		for (int i = dewpoint.length - 1; i >= 1; i--) {
 			double height1 = height[i];
 			double temperature1 = temperature[i];
-			
+
 			double height2 = height[i - 1];
 			double temperature2 = temperature[i - 1];
-			
-			if(temperature1 >= 273.15 - 12 && temperature2 < 273.15 - 12) {
-				if(temperature1 - temperature2 != 0) {
-					double weight2 = (temperature1 - (273.15 - 12))/(temperature1 - temperature2);
+
+			if (temperature1 >= 273.15 - 12 && temperature2 < 273.15 - 12) {
+				if (temperature1 - temperature2 != 0) {
+					double weight2 = (temperature1 - (273.15 - 12)) / (temperature1 - temperature2);
 					double weight1 = 1 - weight2;
-					
+
 					dgzLayer[0] = weight1 * height1 + weight2 * height2 - height[height.length - 1];
 				}
 			}
-			
-			if(temperature1 >= 273.15 - 17 && temperature2 < 273.15 - 17) {
-				if(temperature1 - temperature2 != 0) {
-					double weight2 = (temperature1 - (273.15 - 17))/(temperature1 - temperature2);
+
+			if (temperature1 >= 273.15 - 17 && temperature2 < 273.15 - 17) {
+				if (temperature1 - temperature2 != 0) {
+					double weight2 = (temperature1 - (273.15 - 17)) / (temperature1 - temperature2);
 					double weight1 = 1 - weight2;
-					
+
 					dgzLayer[1] = weight1 * height1 + weight2 * height2 - height[height.length - 1];
 				}
 			}
@@ -2902,7 +3234,6 @@ public class WeatherUtils {
 
 		return dgzLayer;
 	}
-
 
 	/**
 	 * Computes the freezing level given an environmental sounding.
@@ -2915,22 +3246,21 @@ public class WeatherUtils {
 	 * @param dewpoint    Units: array of Kelvins
 	 * @return <b>freezingLevel</b> Units: Meters
 	 */
-	public static double freezingLevel(double[] pressure, double[] height, double[] temperature,
-			double[] dewpoint) {
+	public static double freezingLevel(double[] pressure, double[] height, double[] temperature, double[] dewpoint) {
 		double freezingLevel = -1024.0;
 
 		for (int i = dewpoint.length - 1; i >= 1; i--) {
 			double height1 = height[i];
 			double temperature1 = temperature[i];
-			
+
 			double height2 = height[i - 1];
 			double temperature2 = temperature[i - 1];
-			
-			if(temperature1 >= 273.15 && temperature2 < 273.15) {
-				if(temperature1 - temperature2 != 0) {
-					double weight2 = (temperature1 - (273.15))/(temperature1 - temperature2);
+
+			if (temperature1 >= 273.15 && temperature2 < 273.15) {
+				if (temperature1 - temperature2 != 0) {
+					double weight2 = (temperature1 - (273.15)) / (temperature1 - temperature2);
 					double weight1 = 1 - weight2;
-					
+
 					freezingLevel = weight1 * height1 + weight2 * height2;
 				}
 			}
@@ -2971,6 +3301,27 @@ public class WeatherUtils {
 		float maxColTemp = temperatures[0];
 		for (int i = 1; i < temperatures.length; i++) {
 			maxColTemp = Float.max(maxColTemp, temperatures[i]);
+		}
+
+		float kucheraRatio = (maxColTemp < 271.16f ? 12 + (271.16f - maxColTemp) : 12 + 2 * (271.16f - maxColTemp));
+		return kucheraRatio;
+	}
+
+	/**
+	 * Returns the snow-to-liquid ratio according to the Kuchera method
+	 * 
+	 * @param temperatures Array of temperatures, Units: Kelvins
+	 * @return <b>kucheraRatio:<b/> Units: dimensionless
+	 */
+	public static float kucheraRatio(float[] temperatures, boolean w) {
+		if (temperatures.length == 0)
+			return 10; // assumes 10:1 ratio if null input
+
+		float maxColTemp = temperatures[0];
+		System.out.println("kuchera: " + temperatures[0] + "\t" + maxColTemp);
+		for (int i = 1; i < temperatures.length; i++) {
+			maxColTemp = Float.max(maxColTemp, temperatures[i]);
+			System.out.println("kuchera: " + temperatures[i] + "\t" + maxColTemp);
 		}
 
 		float kucheraRatio = (maxColTemp < 271.16f ? 12 + (271.16f - maxColTemp) : 12 + 2 * (271.16f - maxColTemp));
@@ -3030,7 +3381,7 @@ public class WeatherUtils {
 
 				if (weight != 0) {
 					double prm = (parameter1 + parameter2) / 2.0;
-					
+
 //					System.out.println(parameter1);
 //					System.out.println(parameter2);
 //					System.out.println(prm);

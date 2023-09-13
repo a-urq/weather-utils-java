@@ -1072,13 +1072,22 @@ public class PtypeAlgorithms {
 			isobaricData.add(new RecordAtLevel(pressureLevels[i], tmpIsobaric[i], dptIsobaric[i], hgtIsobaric[i]));
 //			System.out.printf("pressure: %4d mb temperature: %6.2f K, wetbulb: %6.2f K, dewpoint: %6.2f K, hgtIsobaric: %6d m\n", (int) pressureLevels[i]/100, tmpIsobaric[i], isobaricData.get(i).wetbulb, dptIsobaric[i], (int) hgtIsobaric[i]);
 		}
+		
+		if(debug) {
+			for (int i = 0; i < isobaricData.size(); i++) {
+				System.out.printf("%7.1f\t%7.1f\t%7.2f\t%7.2f\t%7.2f\n", isobaricData.get(i).height, 
+						isobaricData.get(i).pressure, isobaricData.get(i).temperature, 
+						isobaricData.get(i).wetbulb, isobaricData.get(i).dewpoint);
+			}
+			System.out.println();
+		}
 
 //		System.out.println("built isobaricData");
 
 		Collections.sort(isobaricData); // should sort top of atmosphere to start of list, surface to bottom of list
 
 		// effectively removes subsurface records
-		for (int i = 0; i < dptIsobaric.length; i++) {
+		for (int i = 0; i < isobaricData.size(); i++) {
 			double heightAtLevel = isobaricData.get(i).height;
 
 			if (heightAtLevel < hgtSurface) {
@@ -1111,13 +1120,15 @@ public class PtypeAlgorithms {
 
 //		System.out.println(Arrays.toString(isobaricData.toArray()));
 
-		double initPressureLayer = 50000;
+		double initPressureLayer = 35000;
 
 		if (dynamicInitLayer) {
 			// looks for first level with RH >= 90
-			for (int i = 0; i < dptIsobaric.length; i++) {
+			for (int i = 0; i < isobaricData.size(); i++) {
 				double rh = WeatherUtils.relativeHumidity(isobaricData.get(i).temperature,
 						isobaricData.get(i).dewpoint);
+				
+				if(debug) System.out.println("checking for init layer @ <" + isobaricData.get(i).pressure + ">: " + rh);
 
 				if (rh >= SATURATION_THRESHOLD_RH) {
 					initPressureLayer = isobaricData.get(i).pressure;
@@ -1129,7 +1140,7 @@ public class PtypeAlgorithms {
 //		System.out.println(initPressureLayer);
 
 		int precipInitIndex = -1;
-		for (int i = 0; i < dptIsobaric.length; i++) {
+		for (int i = 0; i < isobaricData.size(); i++) {
 			if (isobaricData.get(i).pressure >= initPressureLayer) {
 				precipInitIndex = i;
 				break;
@@ -1316,9 +1327,9 @@ public class PtypeAlgorithms {
 			}
 		}
 
-//		System.out.printf("Melting Energy: %4d J/kg, Refreezing Energy: %4d J/kg, Remelting Energy: %4d J/kg\n", (int) meltingEnergy, (int) refreezingEnergy, (int) remeltingEnergy);
-
-		double probSnowI = 15.4 * Math.exp(-0.29 * meltingEnergy); // fraction, NOT PERCENT
+		if(debug) System.out.printf("Melting Energy: %4d J/kg, Refreezing Energy: %4d J/kg, Remelting Energy: %4d J/kg\n", (int) meltingEnergy, (int) refreezingEnergy, (int) remeltingEnergy);
+		
+		double probSnowI = 15.4 * Math.exp(-0.29 * (meltingEnergy + remeltingEnergy)); // fraction, NOT PERCENT
 		if (probSnowI > 1)
 			probSnowI = 1;
 		if (probSnowI < 0)
@@ -1348,6 +1359,13 @@ public class PtypeAlgorithms {
 		double probRain = (1 - probIce) + probIce * probRainI; // fraction, NOT PERCENT
 		if (probRain > 1)
 			probRain = 1;
+		
+		if(debug) {
+			System.out.println("prob rain: " + probRain);
+			System.out.println("prob icep: " + probIcep);
+			System.out.println("prob snow: " + probSnow);
+			System.out.println("prob ice: " + probIce);
+		}
 
 		int dominantType = 0; // 0 = snow, 1 = rain, 2 = ice pellets
 
@@ -1482,6 +1500,7 @@ public class PtypeAlgorithms {
 			float[] dptIsobaric, float[] hgtIsobaric, float presSurface, float hgtSurface, float tmpSurface,
 			boolean dynamicInitLayer, boolean debug) {
 		if(debug) System.out.println("ptype debug on");
+		if(debug) System.out.println(tmpIsobaric[tmpIsobaric.length - 1] + "\t" + tmpSurface);
 		PrecipitationType preExtension = bourgouinRevisedMethod(pressureLevels, tmpIsobaric, dptIsobaric, hgtIsobaric,
 				presSurface, hgtSurface, true, debug);
 
@@ -1502,8 +1521,18 @@ public class PtypeAlgorithms {
 			}
 		}
 
+		if(debug) System.out.println("tmpSurface: " + tmpSurface);
 		if (preExtension == PrecipitationType.SNOW) {
+			for(int i = 0; i < tmpIsobaric.length - 1; i++) {
+				if(pressureLevels[i] > presSurface) {
+					tmpIsobaric[i] = tmpIsobaric[tmpIsobaric.length - 1];
+				}
+			}
+			
 			double kucheraRatio = WeatherUtils.kucheraRatio(tmpIsobaric);
+			
+			if(debug) WeatherUtils.kucheraRatio(tmpIsobaric, true);
+			if(debug) System.out.println("kuchera ratio: " + kucheraRatio);
 
 			if (kucheraRatio >= 25) {
 				return VERY_DRY_SNOW;
@@ -1590,6 +1619,16 @@ public class PtypeAlgorithms {
 		} else {
 			return SNOW;
 		}
+	}
+	
+	public static PrecipitationType ramerMethod(float[] pressureLevels, float[] tmpIsobaric, float[] dptIsobaric,
+			float[] hgtIsobaric, float presSurface, float hgtSurface) {
+		double[] pressureLevelsD = convFloatToDouble(pressureLevels);
+		double[] tmpIsobaricD = convFloatToDouble(tmpIsobaric);
+		double[] dptIsobaricD = convFloatToDouble(dptIsobaric);
+		double[] hgtIsobaricD = convFloatToDouble(hgtIsobaric);
+		
+		return ramerMethod(pressureLevelsD, tmpIsobaricD, dptIsobaricD, hgtIsobaricD, (double) presSurface, (double) hgtSurface);
 	}
 
 	/**
@@ -1749,6 +1788,57 @@ public class PtypeAlgorithms {
 				return RAIN;
 			}
 		}
+	}
+
+	/**
+	 * @param pressureLevels   All pressure levels of the profile, in Pascals
+	 * @param tmpIsobaric      All isobaric temperatures of the profile, in Kelvins
+	 * @param dptIsobaric      All isobaric dewpoints of the profile, in Kelvins
+	 * @param hgtIsobaric      All isobaric heights of the profile, in Meters
+	 * @param presSurface      Surface pressure, in Pascals
+	 * @param hgtSurface       Surface height, in Meters
+	 * @param tmpSurface       Surface temperature, in Kelvins
+	 * @param dynamicInitLayer true = find highest level with a dewpoint depression
+	 *                         of 3 K, false = always init at 500 mb
+	 * @return The precipitation type diagnosed by the Bourgouin Revised 2021 Method
+	 *         (https://doi.org/10.1175/WAF-D-20-0118.1), extended by the kuchera
+	 *         method and a surface vs. elevated-only check on the freezing rain
+	 */
+	public static PrecipitationType ramerExtendedMethod(float[] pressureLevels, float[] tmpIsobaric,
+			float[] dptIsobaric, float[] hgtIsobaric, float presSurface, float hgtSurface, float tmpSurface) {
+		PrecipitationType preExtension = ramerMethod(pressureLevels, tmpIsobaric, dptIsobaric, hgtIsobaric,
+				presSurface, hgtSurface);
+
+//		System.out.println(Arrays.toString(pressureLevels));
+//		System.out.println(Arrays.toString(tmpIsobaric));
+//		System.out.println(Arrays.toString(dptIsobaric));
+//		System.out.println(Arrays.toString(hgtIsobaric));
+//		System.out.println(presSurface);
+//		System.out.println(hgtSurface);
+//		System.out.println(tmpSurface);
+//		System.out.println(dynamicInitLayer);
+
+		if (preExtension == PrecipitationType.FREEZING_RAIN) {
+			if (tmpSurface <= 273.15) {
+				return PrecipitationType.FREEZING_RAIN_SURFACE;
+			} else {
+				return PrecipitationType.FREEZING_RAIN_ELEVATED;
+			}
+		}
+
+		if (preExtension == PrecipitationType.SNOW) {
+			double kucheraRatio = WeatherUtils.kucheraRatio(tmpIsobaric);
+
+			if (kucheraRatio >= 25) {
+				return VERY_DRY_SNOW;
+			} else if (kucheraRatio >= 10) {
+				return DRY_SNOW;
+			} else {
+				return WET_SNOW;
+			}
+		}
+
+		return preExtension;
 	}
 
 	private static double[] convFloatToDouble(float[] arr) {
