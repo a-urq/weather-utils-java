@@ -663,6 +663,11 @@ public class WeatherUtils {
 //			System.out.printf("%6.1f\t", height);
 //			System.out.printf("%6.1f\t", equilibriumLevel);
 
+			double eSfcVirtTemp = virtualTemperature(envTemperature[envTemperature.length - 1], 
+					envDewpoint[envDewpoint.length - 1], envPressure[envPressure.length - 1]);
+			double pSfcVirtTemp = virtualTemperature(parcelTemperature[parcelTemperature.length - 1], 
+					parcelDewpoint[parcelDewpoint.length - 1], parcelPressure[parcelPressure.length - 1]);
+
 			if (height < equilibriumLevel && height > levelOfFreeConvection && pPres >= envPressure[0]) {
 				double pTemp = parcelTemperature[i];
 				double pDwpt = parcelDewpoint[i];
@@ -675,10 +680,13 @@ public class WeatherUtils {
 				double pVirtTemp = virtualTemperature(pTemp, pDwpt, pPres);
 
 				double energyAdded = gravAccel * (pVirtTemp - eVirtTemp) / eVirtTemp;
-//				System.out.println(dz);
-//				System.out.printf("%6.1f\t", ePres/100.0);
-//				System.out.print(energyAdded + " energyAdded\t");
-//				System.out.print((energyAdded > 0) + " energyAdded\t");
+				
+				if(pSfcVirtTemp != eSfcVirtTemp) {
+//					System.out.print(height + "\t");
+//					System.out.printf("%6.1f\t", ePres/100.0);
+//					System.out.print(energyAdded + " energyAdded\t");
+//					System.out.print((energyAdded > 0) + " energyAdded\n");
+				}
 
 				if (energyAdded > 0 && pDwpt >= pTemp) {
 					double dz = parcelHeight[i] - parcelHeight[i + 1];
@@ -689,7 +697,7 @@ public class WeatherUtils {
 //					System.out.println(energyAdded * dz + " J kg^-1 added");
 //					System.out.println(potentialEnergy + " J kg^-1 total");
 				} else {
-					return potentialEnergy;
+//					return potentialEnergy;
 				}
 			}
 		}
@@ -1356,15 +1364,15 @@ public class WeatherUtils {
 			double theta2 = potentialTemperature[i - 1];
 			double mixingRatio2 = mixingRatio[i - 1];
 
-			if (pressure2 > topOfInflowLayer && pressure2 <= bottomOfInflowLayer) {
+			if (pressure2 > topOfInflowLayer && pressure2 <= bottomOfInflowLayer && pressure2 != pressure1) {
 				double weight = (pressure1 - pressure2) / 100.0;
 
 				averageThetaSum += weight * (theta1 + theta2) / 2.0;
 				averageMixingRatioSum += weight * (mixingRatio1 + mixingRatio2) / 2.0;
 				weightSum += weight;
 
-				double averageTheta = averageThetaSum / weightSum;
-				double averageMixingRatio = averageMixingRatioSum / weightSum;
+//				double averageTheta = averageThetaSum / weightSum;
+//				double averageMixingRatio = averageMixingRatioSum / weightSum;
 
 //				System.out.println("i:\t" + i);
 //				System.out.println("theta:\t" + ((theta1 + theta2) / 2.0) + " K");
@@ -2041,9 +2049,19 @@ public class WeatherUtils {
 		double lfc = 0.0; // meters
 		double el = equilibriumLevel(envPressure, envTemperature, envDewpoint, parcelPressure, parcelHeight,
 				parcelTemperature, parcelDewpoint);
+		double lcl = liftedCondensationLevel(parcelPressure, parcelHeight, parcelTemperature, parcelDewpoint);
 
-		for (int i = 0; i < parcelPressure.length; i++) {
+//		double eSfcVirtTemp = virtualTemperature(envTemperature[envTemperature.length - 1], 
+//				envDewpoint[envDewpoint.length - 1], envPressure[envPressure.length - 1]);
+//		double pSfcVirtTemp = virtualTemperature(parcelTemperature[parcelTemperature.length - 1], 
+//				parcelDewpoint[parcelDewpoint.length - 1], parcelPressure[parcelPressure.length - 1]);
+
+		for (int i = parcelPressure.length - 1; i >= 0; i--) {
 			double height = parcelHeight[i];
+			
+			if(height < lcl /* && pSfcVirtTemp != eSfcVirtTemp*/) {
+				continue;
+			}
 
 			if (height < el) {
 				double pPres = parcelPressure[i];
@@ -2059,7 +2077,7 @@ public class WeatherUtils {
 
 //				System.out.printf("%7.1f\t%5.1f\t%5.1f\n", ePres/100.0, eVirtTemp, pVirtTemp);
 
-				if (pVirtTemp <= eVirtTemp) {
+				if (pVirtTemp >= eVirtTemp) {
 //					System.out.println(ePres + " Pa");
 //					System.out.println(parcelHeight[i] + " m");
 					return parcelHeight[i];
@@ -2074,12 +2092,11 @@ public class WeatherUtils {
 	 * Computes the level of free convection given a parcel path. Assumes that all
 	 * arrays are sorted in order of increasing pressure.
 	 * 
-	 * @param surfacePressure Units: Pascals
 	 * @param parcelPath      Type: ArrayList of RecordAtLevel, should be type
 	 *                        returned by computeParcelPath()
 	 * @return <b>liftedCondensationLevel</b> Units: Meters
 	 */
-	public static double liftedCondensationLevel(double surfacePressure, ArrayList<RecordAtLevel> parcelPath) {
+	public static double liftedCondensationLevel(ArrayList<RecordAtLevel> parcelPath) {
 		double[] parcelPressure = new double[parcelPath.size()];
 		double[] parcelHeight = new double[parcelPath.size()];
 		double[] parcelTemperature = new double[parcelPath.size()];
@@ -2092,7 +2109,7 @@ public class WeatherUtils {
 			parcelDewpoint[i] = parcelPath.get(parcelPath.size() - 1 - i).dewpoint;
 		}
 
-		return liftedCondensationLevel(surfacePressure, parcelPressure, parcelHeight, parcelTemperature,
+		return liftedCondensationLevel(parcelPressure, parcelHeight, parcelTemperature,
 				parcelDewpoint);
 	}
 
@@ -2106,7 +2123,7 @@ public class WeatherUtils {
 	 * @param parcelDewpoint    Units: Kelvins
 	 * @return <b>liftedCondensationLevel</b> Units: Meters
 	 */
-	public static double liftedCondensationLevel(double surfacePressure, double[] parcelPressure, double[] parcelHeight,
+	public static double liftedCondensationLevel(double[] parcelPressure, double[] parcelHeight,
 			double[] parcelTemperature, double[] parcelDewpoint) {
 		double lcl = -1024.0; // meters
 
@@ -2935,7 +2952,7 @@ public class WeatherUtils {
 
 		ArrayList<RecordAtLevel> mlParcel = WeatherUtils.computeParcelPath(pressure, temperature, dewpoint,
 				ParcelPath.MIXED_LAYER_100MB, false);
-		double mlLcl = WeatherUtils.liftedCondensationLevel(pressure[pressure.length - 1], mlParcel);
+		double mlLcl = WeatherUtils.liftedCondensationLevel(mlParcel);
 
 		double effectiveSrh = stormRelativeHelicity(pressure, height, uWind, vWind, stormMotion, inflowLayer[0],
 				inflowLayer[1]);
@@ -3044,7 +3061,7 @@ public class WeatherUtils {
 
 		ArrayList<RecordAtLevel> sbParcel = WeatherUtils.computeParcelPath(pressure, temperature, dewpoint,
 				ParcelPath.SURFACE_BASED, false);
-		double sbLcl = WeatherUtils.liftedCondensationLevel(pressure[pressure.length - 1], sbParcel);
+		double sbLcl = WeatherUtils.liftedCondensationLevel(sbParcel);
 
 		double srh1km = stormRelativeHelicity(pressure, height, uWind, vWind, stormMotion, inflowLayer[0],
 				inflowLayer[1]);

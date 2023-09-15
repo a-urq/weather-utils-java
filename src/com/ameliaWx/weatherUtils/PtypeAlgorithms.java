@@ -436,7 +436,7 @@ public class PtypeAlgorithms {
 			// looks for first level with a dewpoint depression less than or equal to 3
 			// kelvins
 			// assumes that's the precip initial layer
-			for (int i = 0; i < dptIsobaric.length; i++) {
+			for (int i = 0; i < isobaricData.size(); i++) {
 //				System.out.println(isobaricData.get(i).pressure/100 + "\t" + dewpointDepression);
 
 				double rh = WeatherUtils.relativeHumidity(isobaricData.get(i).temperature,
@@ -1681,7 +1681,7 @@ public class PtypeAlgorithms {
 
 		double initPressureLayer = 50000;
 
-		for (int i = 0; i < dptIsobaric.length; i++) {
+		for (int i = 0; i < isobaricData.size(); i++) {
 			double rh = WeatherUtils.relativeHumidity(isobaricData.get(i).temperature, isobaricData.get(i).dewpoint);
 
 			if (rh >= SATURATION_THRESHOLD_RH) {
