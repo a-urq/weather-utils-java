@@ -1136,6 +1136,8 @@ public class PtypeAlgorithms {
 				}
 			}
 		}
+		
+		initPressureLayer = 35000;
 
 //		System.out.println(initPressureLayer);
 
@@ -1344,7 +1346,7 @@ public class PtypeAlgorithms {
 				probIcepI = 1;
 			if (probIcepI < 0)
 				probIcepI = 0;
-			probIcep = probIcepI;// * probIce; // fraction, NOT PERCENT
+			probIcep = probIcepI * probIce; // fraction, NOT PERCENT
 		}
 
 		double probRainI = (-2.1 * refreezingEnergy + 0.2 * (meltingEnergy + remeltingEnergy) + 458) / 100.0;
