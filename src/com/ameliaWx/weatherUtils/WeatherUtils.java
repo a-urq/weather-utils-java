@@ -108,6 +108,25 @@ public class WeatherUtils {
 	}
 
 	/**
+	 * Computes the frost point using temperature and relative humidity.
+	 * 
+	 * @param temperature            Units: Kelvins
+	 * @param relativeHumidityWrtIce Units: Fraction (not Percent!)
+	 * @return <b>frostPoint</b>     Units: Kelvins
+	 */
+	public static double frostPoint(double temperature, double relativeHumidityWrtIce) {
+		double e0 = 611; // Pascals
+		double t0 = 273.15; // Kelvins
+
+		double es = vaporPressure(temperature);
+
+		double frostPointReciprocal = 1 / t0
+				- waterVaporGasConstant / latentHeatOfVaporization * Math.log(es * relativeHumidityWrtIce / e0);
+
+		return 1 / frostPointReciprocal;
+	}
+
+	/**
 	 * Computes height above sea level at a given pressure. Note that this assumes a
 	 * constant scale height of 8500 m, regardless of the air temperatures.
 	 * 
@@ -142,7 +161,7 @@ public class WeatherUtils {
 	 * 
 	 * @param pressure Units: Pascals
 	 * @param dewpoint Units: Kelvins
-	 * @return <b>mixingRatio</b> Units: Fraction
+	 * @return <b>mixingRatio</b> Units: Fraction (kg kg^-1)
 	 */
 	public static double mixingRatio(double pressure, double dewpoint) {
 		double vaporPressure = WeatherUtils.vaporPressure(dewpoint);
@@ -252,6 +271,20 @@ public class WeatherUtils {
 	}
 
 	/**
+	 * Computes relative humidity w.r.t. ice using temperature and frost point.
+	 * 
+	 * @param temperature Units: Kelvins
+	 * @param frostPoint  Units: Kelvins
+	 * @return <b>relativeHumidityWrtIce</b> Units: Fraction (not Percent!)
+	 */
+	public static double relativeHumidityWrtIce(double temperature, double frostPoint) {
+		double vaporPres = vaporPressureWrtIce(frostPoint);
+		double satVaporPres = vaporPressureWrtIce(temperature);
+
+		return vaporPres / satVaporPres;
+	}
+
+	/**
 	 * Computes the specific heat capacity (constant pressure) of a parcel of air
 	 * with the given pressure, temperature, and dewpoint.
 	 * 
@@ -322,6 +355,19 @@ public class WeatherUtils {
 		double t0 = 273.15; // Kelvins
 
 		return e0 * Math.exp(latentHeatOfVaporization / waterVaporGasConstant * (1 / t0 - 1 / dewpoint));
+	}
+
+	/**
+	 * Computes the partial pressure of water vapor in air with the dewpoint given.
+	 * 
+	 * @param frostPoint Units: Kelvins
+	 * @return <b>vaporPressure</b> Units: Pascals
+	 */
+	public static double vaporPressureWrtIce(double frostPoint) {
+		double e0 = 611; // Pascals
+		double t0 = 273.15; // Kelvins
+
+		return e0 * Math.exp(latentHeatOfSublimation / waterVaporGasConstant * (1 / t0 - 1 / frostPoint));
 	}
 
 	// make virt temp
@@ -554,10 +600,78 @@ public class WeatherUtils {
 
 			return force;
 		} else { // will only execute if dimensions == 3
-			double[] force = { f * v, -f * u, 0 };
+			double[] force = { f * v, -f * u, 2 * coriolisConstant * Math.cos(Math.toRadians(latitude)) * u};
 
 			return force;
 		}
+	}
+
+	/**
+	 * Computes the inferred temperature advection within a layer
+	 * 
+	 * Assumes all arrays are sorted in order of increasing pressure.
+	 * 
+	 * @param pressure        Units: array of Pascals
+	 * @param height          Units: array of Meters
+	 * @param uWind           Units: array of m s^-1
+	 * @param vWind           Units: array of m s^-1
+	 * @param latitude        Units: Degrees
+	 * @param upperLimitPres  Units: Pascals, higher altitude (lower pres value)
+	 * @param lowerLimitPres  Units: Pascals, lower altitude (higher pres value)
+	 * @return <b>inferredTemperatureAdvection</b> Units: K s^-1
+	 */
+	public static double inferredTemperatureAdvection(double[] pressure, double[] height, double[] uWind, double[] vWind, double latitude, double upperLimitPres, double lowerLimitPres) {
+		double coriolisParameter = coriolisParameter(latitude);
+
+//		double heightLower = logInterp(pressure, height, lowerLimitPres);
+		double uWindLower = logInterp(pressure, uWind, lowerLimitPres);
+		double vWindLower = logInterp(pressure, vWind, lowerLimitPres);
+		
+//		double heightUpper = logInterp(pressure, height, upperLimitPres);
+		double uWindUpper = logInterp(pressure, uWind, upperLimitPres);
+		double vWindUpper = logInterp(pressure, vWind, upperLimitPres);
+		
+		double dTdx = -(vWindUpper - vWindLower) * (coriolisParameter / (dryAirGasConstant * Math.log(lowerLimitPres/upperLimitPres)));
+		double dTdy = (uWindUpper - uWindLower) * (coriolisParameter / (dryAirGasConstant * Math.log(lowerLimitPres/upperLimitPres)));
+
+		double dTdtValueSum = 0.0;
+		double dTdtWeightSum = 0.0;
+		
+		for (int i = 0; i < uWind.length - 1; i++) {
+			double pressure1 = pressure[i];
+			double uWind1 = uWind[i];
+			double vWind1 = vWind[i];
+
+			double pressure2 = pressure[i + 1];
+			double uWind2 = uWind[i + 1];
+			double vWind2 = vWind[i + 1];
+
+			double height1 = height[i];
+			double height2 = height[i + 1];
+
+			if (pressure2 <= upperLimitPres || pressure1 >= lowerLimitPres) { // work out after braums
+				continue;
+			} else {
+				if (upperLimitPres >= pressure1 && upperLimitPres < pressure2) {
+					uWind1 = logInterp(pressure, uWind, upperLimitPres);
+					vWind1 = logInterp(pressure, vWind, upperLimitPres);
+				}
+
+				if (lowerLimitPres >= pressure1 && lowerLimitPres < pressure2) {
+					uWind2 = logInterp(pressure, uWind, lowerLimitPres);
+					vWind2 = logInterp(pressure, vWind, lowerLimitPres);
+				}
+				
+				double dTdt = (uWind1 + uWind2)/2.0 * dTdx + (vWind1 + vWind2)/2.0 * dTdy;
+				double weight = (height1 - height2)/1000.0;
+				
+				dTdtValueSum += dTdt * weight;
+				dTdtWeightSum += weight;
+			}
+		}
+		
+		double inferredTemperatureAdvection = dTdtValueSum/dTdtWeightSum;
+		return inferredTemperatureAdvection;
 	}
 
 	/**
@@ -663,9 +777,9 @@ public class WeatherUtils {
 //			System.out.printf("%6.1f\t", height);
 //			System.out.printf("%6.1f\t", equilibriumLevel);
 
-			double eSfcVirtTemp = virtualTemperature(envTemperature[envTemperature.length - 1], 
+			double eSfcVirtTemp = virtualTemperature(envTemperature[envTemperature.length - 1],
 					envDewpoint[envDewpoint.length - 1], envPressure[envPressure.length - 1]);
-			double pSfcVirtTemp = virtualTemperature(parcelTemperature[parcelTemperature.length - 1], 
+			double pSfcVirtTemp = virtualTemperature(parcelTemperature[parcelTemperature.length - 1],
 					parcelDewpoint[parcelDewpoint.length - 1], parcelPressure[parcelPressure.length - 1]);
 
 			if (height < equilibriumLevel && height > levelOfFreeConvection && pPres >= envPressure[0]) {
@@ -680,8 +794,8 @@ public class WeatherUtils {
 				double pVirtTemp = virtualTemperature(pTemp, pDwpt, pPres);
 
 				double energyAdded = gravAccel * (pVirtTemp - eVirtTemp) / eVirtTemp;
-				
-				if(pSfcVirtTemp != eSfcVirtTemp) {
+
+				if (pSfcVirtTemp != eSfcVirtTemp) {
 //					System.out.print(height + "\t");
 //					System.out.printf("%6.1f\t", ePres/100.0);
 //					System.out.print(energyAdded + " energyAdded\t");
@@ -772,8 +886,8 @@ public class WeatherUtils {
 	}
 
 	/**
-	 * Computes ILCAPE (inflow layer cape) given an environmental sounding Assumes that all arrays are
-	 * sorted in order of increasing pressure.
+	 * Computes ILCAPE (inflow layer cape) given an environmental sounding Assumes
+	 * that all arrays are sorted in order of increasing pressure.
 	 * 
 	 * @param envPressure     Units: array of Pascals
 	 * @param envTemperature  Units: array of Kelvins
@@ -781,9 +895,9 @@ public class WeatherUtils {
 	 * @param mixedLayerDepth Units: Pascals
 	 * @return <b>potentialEnergy</b> Units: J kg^-1
 	 */
-	public static double computeIlcape(double[] envPressure, double[] envHeight, double[] envTemperature, double[] envDewpoint,
-			double mixedLayerDepth) {
-		ArrayList<RecordAtLevel> parcelPath = computeInflowLayerParcelPath(envPressure, envHeight, envTemperature, 
+	public static double computeIlcape(double[] envPressure, double[] envHeight, double[] envTemperature,
+			double[] envDewpoint, double mixedLayerDepth) {
+		ArrayList<RecordAtLevel> parcelPath = computeInflowLayerParcelPath(envPressure, envHeight, envTemperature,
 				envDewpoint, false);
 
 		return computeCape(envPressure, envTemperature, envDewpoint, parcelPath);
@@ -945,8 +1059,8 @@ public class WeatherUtils {
 	}
 
 	/**
-	 * Computes ILCINH (inflow layer cinh) given an environmental sounding Assumes that all arrays are
-	 * sorted in order of increasing pressure.
+	 * Computes ILCINH (inflow layer cinh) given an environmental sounding Assumes
+	 * that all arrays are sorted in order of increasing pressure.
 	 * 
 	 * @param envPressure     Units: array of Pascals
 	 * @param envTemperature  Units: array of Kelvins
@@ -954,9 +1068,9 @@ public class WeatherUtils {
 	 * @param mixedLayerDepth Units: Pascals
 	 * @return <b>potentialEnergy</b> Units: J kg^-1
 	 */
-	public static double computeIlcinh(double[] envPressure, double[] envHeight, double[] envTemperature, double[] envDewpoint,
-			double mixedLayerDepth) {
-		ArrayList<RecordAtLevel> parcelPath = computeInflowLayerParcelPath(envPressure, envHeight, envTemperature, 
+	public static double computeIlcinh(double[] envPressure, double[] envHeight, double[] envTemperature,
+			double[] envDewpoint, double mixedLayerDepth) {
+		ArrayList<RecordAtLevel> parcelPath = computeInflowLayerParcelPath(envPressure, envHeight, envTemperature,
 				envDewpoint, false);
 
 		return computeCape(envPressure, envTemperature, envDewpoint, parcelPath);
@@ -1150,6 +1264,10 @@ public class WeatherUtils {
 			}
 		}
 
+		if (minThetaEIndex < 0) {
+			return parcelPath;
+		}
+
 		parcelPressure = pressure[minThetaEIndex];
 		parcelTemperature = WeatherUtils.wetBulbTemperature(temperature[minThetaEIndex], dewpoint[minThetaEIndex],
 				pressure[minThetaEIndex]);
@@ -1320,8 +1438,8 @@ public class WeatherUtils {
 	 * @return <b>parcelPath</b> RecordAtLevel {pressure: Pascals, temperature:
 	 *         Kelvins, wetbulb: Kelvins, dewpoint: Kelvins, height: Meters}
 	 */
-	public static ArrayList<RecordAtLevel> computeInflowLayerParcelPath(double[] pressure, double[] heightArr, double[] temperature,
-			double[] dewpoint, boolean doEntrainment) {
+	public static ArrayList<RecordAtLevel> computeInflowLayerParcelPath(double[] pressure, double[] heightArr,
+			double[] temperature, double[] dewpoint, boolean doEntrainment) {
 		ArrayList<RecordAtLevel> parcelPath = new ArrayList<>();
 
 		final double ITER_HEIGHT_CHANGE = 20; // change per iteration
@@ -1346,7 +1464,7 @@ public class WeatherUtils {
 		}
 
 		double[] inflowLayer = effectiveInflowLayerPressure(pressure, heightArr, temperature, dewpoint);
-		
+
 		double topOfInflowLayer = inflowLayer[1];
 		double bottomOfInflowLayer = inflowLayer[0];
 
@@ -1364,7 +1482,7 @@ public class WeatherUtils {
 			double theta2 = potentialTemperature[i - 1];
 			double mixingRatio2 = mixingRatio[i - 1];
 
-			if (pressure2 > topOfInflowLayer && pressure2 <= bottomOfInflowLayer && pressure2 != pressure1) {
+			if (pressure2 >= topOfInflowLayer && pressure2 <= bottomOfInflowLayer && pressure2 != pressure1) {
 				double weight = (pressure1 - pressure2) / 100.0;
 
 				averageThetaSum += weight * (theta1 + theta2) / 2.0;
@@ -1874,8 +1992,8 @@ public class WeatherUtils {
 	 * @return <b>inflowLayer</b> Units: array of Pascals, first entry: lower limit,
 	 *         second entry: upper limit
 	 */
-	public static double[] effectiveInflowLayerPressure(double[] envPressure, double[] envHeight, double[] envTemperature,
-			double[] envDewpoint) {
+	public static double[] effectiveInflowLayerPressure(double[] envPressure, double[] envHeight,
+			double[] envTemperature, double[] envDewpoint) {
 		double[] inflowLayer = new double[2];
 
 		double mucape = computeMucape(envPressure, envTemperature, envDewpoint); // J kg^-1
@@ -2058,8 +2176,8 @@ public class WeatherUtils {
 
 		for (int i = parcelPressure.length - 1; i >= 0; i--) {
 			double height = parcelHeight[i];
-			
-			if(height < lcl /* && pSfcVirtTemp != eSfcVirtTemp*/) {
+
+			if (height < lcl /* && pSfcVirtTemp != eSfcVirtTemp */) {
 				continue;
 			}
 
@@ -2092,8 +2210,8 @@ public class WeatherUtils {
 	 * Computes the level of free convection given a parcel path. Assumes that all
 	 * arrays are sorted in order of increasing pressure.
 	 * 
-	 * @param parcelPath      Type: ArrayList of RecordAtLevel, should be type
-	 *                        returned by computeParcelPath()
+	 * @param parcelPath Type: ArrayList of RecordAtLevel, should be type returned
+	 *                   by computeParcelPath()
 	 * @return <b>liftedCondensationLevel</b> Units: Meters
 	 */
 	public static double liftedCondensationLevel(ArrayList<RecordAtLevel> parcelPath) {
@@ -2109,8 +2227,7 @@ public class WeatherUtils {
 			parcelDewpoint[i] = parcelPath.get(parcelPath.size() - 1 - i).dewpoint;
 		}
 
-		return liftedCondensationLevel(parcelPressure, parcelHeight, parcelTemperature,
-				parcelDewpoint);
+		return liftedCondensationLevel(parcelPressure, parcelHeight, parcelTemperature, parcelDewpoint);
 	}
 
 	/**
@@ -3317,6 +3434,54 @@ public class WeatherUtils {
 
 		float maxColTemp = temperatures[0];
 		for (int i = 1; i < temperatures.length; i++) {
+			maxColTemp = Float.max(maxColTemp, temperatures[i]);
+		}
+
+		float kucheraRatio = (maxColTemp < 271.16f ? 12 + (271.16f - maxColTemp) : 12 + 2 * (271.16f - maxColTemp));
+		return kucheraRatio;
+	}
+
+	/**
+	 * Returns the snow-to-liquid ratio according to the Kuchera method. Allows for
+	 * the final record to be excluded, for example if it's a surface temperature
+	 * instead of an air temperature.
+	 * 
+	 * @param temperatures Array of temperatures, Units: Kelvins
+	 * @param limit        Number of records that are air temperatures and not
+	 *                     ground temperatures, assumes all air temperature are
+	 *                     before surface temperatures.
+	 * @return <b>kucheraRatio:<b/> Units: dimensionless
+	 */
+	public static double kucheraRatio(double[] temperatures, int limit) {
+		if (temperatures.length == 0)
+			return 10; // assumes 10:1 ratio if null input
+
+		double maxColTemp = temperatures[0];
+		for (int i = 1; i < Integer.min(temperatures.length, limit); i++) {
+			maxColTemp = Double.max(maxColTemp, temperatures[i]);
+		}
+
+		double kucheraRatio = (maxColTemp < 271.16 ? 12 + (271.16 - maxColTemp) : 12 + 2 * (271.16 - maxColTemp));
+		return kucheraRatio;
+	}
+
+	/**
+	 * Returns the snow-to-liquid ratio according to the Kuchera method. Allows for
+	 * the final record to be excluded, for example if it's a surface temperature
+	 * instead of an air temperature.
+	 * 
+	 * @param temperatures Array of temperatures, Units: Kelvins
+	 * @param limit        Number of records that are air temperatures and not
+	 *                     ground temperatures, assumes all air temperature are
+	 *                     before surface temperatures.
+	 * @return <b>kucheraRatio:<b/> Units: dimensionless
+	 */
+	public static float kucheraRatio(float[] temperatures, int limit) {
+		if (temperatures.length == 0)
+			return 10; // assumes 10:1 ratio if null input
+
+		float maxColTemp = temperatures[0];
+		for (int i = 1; i < Integer.min(temperatures.length, limit); i++) {
 			maxColTemp = Float.max(maxColTemp, temperatures[i]);
 		}
 

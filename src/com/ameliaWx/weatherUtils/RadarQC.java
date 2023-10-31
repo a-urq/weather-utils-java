@@ -1,6 +1,9 @@
 package com.ameliaWx.weatherUtils;
 
 public class RadarQC {
+	// TODO:
+	// IMPLEMENT REGION BASED ALGORITHM FROM PYART (https://github.com/ARM-DOE/pyart/blob/main/pyart/correct/region_dealias.py)
+
 	// algorithm is of my own invention
 	// some points inspired by UNRAVEL (https://doi.org/10.1175/JTECH-D-19-0020.1)
 	// but hopefully faster

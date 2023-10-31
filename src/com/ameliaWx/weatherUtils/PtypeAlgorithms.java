@@ -1344,7 +1344,7 @@ public class PtypeAlgorithms {
 				probIcepI = 1;
 			if (probIcepI < 0)
 				probIcepI = 0;
-			probIcep = probIcepI * probIce; // fraction, NOT PERCENT
+			probIcep = probIcepI;// * probIce; // fraction, NOT PERCENT
 		}
 
 		double probRainI = (-2.1 * refreezingEnergy + 0.2 * (meltingEnergy + remeltingEnergy) + 458) / 100.0;
@@ -1493,8 +1493,8 @@ public class PtypeAlgorithms {
 	 * @param dynamicInitLayer true = find highest level with a dewpoint depression
 	 *                         of 3 K, false = always init at 500 mb
 	 * @return The precipitation type diagnosed by the Bourgouin Revised 2021 Method
-	 *         (https://doi.org/10.1175/WAF-D-20-0118.1), extended by the kuchera
-	 *         method and a surface vs. elevated-only check on the freezing rain
+	 *         (https://doi.org/10.1175/WAF-D-20-0118.1), extended by the Kuchera
+	 *         Method and a surface vs. elevated-only check on the freezing rain
 	 */
 	public static PrecipitationType bourgouinRevisedExtendedMethod(float[] pressureLevels, float[] tmpIsobaric,
 			float[] dptIsobaric, float[] hgtIsobaric, float presSurface, float hgtSurface, float tmpSurface,
@@ -1529,7 +1529,7 @@ public class PtypeAlgorithms {
 				}
 			}
 			
-			double kucheraRatio = WeatherUtils.kucheraRatio(tmpIsobaric);
+			double kucheraRatio = WeatherUtils.kucheraRatio(tmpIsobaric, dptIsobaric.length);
 			
 			if(debug) WeatherUtils.kucheraRatio(tmpIsobaric, true);
 			if(debug) System.out.println("kuchera ratio: " + kucheraRatio);
@@ -1801,8 +1801,8 @@ public class PtypeAlgorithms {
 	 * @param dynamicInitLayer true = find highest level with a dewpoint depression
 	 *                         of 3 K, false = always init at 500 mb
 	 * @return The precipitation type diagnosed by the Bourgouin Revised 2021 Method
-	 *         (https://doi.org/10.1175/WAF-D-20-0118.1), extended by the kuchera
-	 *         method and a surface vs. elevated-only check on the freezing rain
+	 *         (https://doi.org/10.1175/WAF-D-20-0118.1), extended by the Kuchera
+	 *         Method and a surface vs. elevated-only check on the freezing rain
 	 */
 	public static PrecipitationType ramerExtendedMethod(float[] pressureLevels, float[] tmpIsobaric,
 			float[] dptIsobaric, float[] hgtIsobaric, float presSurface, float hgtSurface, float tmpSurface) {
@@ -1827,7 +1827,7 @@ public class PtypeAlgorithms {
 		}
 
 		if (preExtension == PrecipitationType.SNOW) {
-			double kucheraRatio = WeatherUtils.kucheraRatio(tmpIsobaric);
+			double kucheraRatio = WeatherUtils.kucheraRatio(tmpIsobaric, dptIsobaric.length);
 
 			if (kucheraRatio >= 25) {
 				return VERY_DRY_SNOW;
