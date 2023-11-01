@@ -1137,7 +1137,7 @@ public class PtypeAlgorithms {
 			}
 		}
 		
-		initPressureLayer = 35000;
+//		initPressureLayer = 35000; // for testing purposes
 
 //		System.out.println(initPressureLayer);
 

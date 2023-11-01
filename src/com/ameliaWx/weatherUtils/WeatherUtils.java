@@ -118,10 +118,25 @@ public class WeatherUtils {
 		double e0 = 611; // Pascals
 		double t0 = 273.15; // Kelvins
 
-		double es = vaporPressure(temperature);
+		double es = vaporPressureWrtIce(temperature);
 
 		double frostPointReciprocal = 1 / t0
 				- waterVaporGasConstant / latentHeatOfVaporization * Math.log(es * relativeHumidityWrtIce / e0);
+
+		return 1 / frostPointReciprocal;
+	}
+
+	/**
+	 * Computes the frost point using the dewpoint.
+	 * 
+	 * @param dewpoint               Units: Kelvins
+	 * @return <b>frostPoint</b>     Units: Kelvins
+	 */
+	public static double frostPointFromDewpoint(double dewpoint) {
+		double t0 = 273.15; // Kelvins
+
+		double frostPointReciprocal = 1 / t0
+				- latentHeatOfVaporization / latentHeatOfSublimation * (1 / t0 - 1 / dewpoint);
 
 		return 1 / frostPointReciprocal;
 	}
@@ -279,6 +294,20 @@ public class WeatherUtils {
 	 */
 	public static double relativeHumidityWrtIce(double temperature, double frostPoint) {
 		double vaporPres = vaporPressureWrtIce(frostPoint);
+		double satVaporPres = vaporPressureWrtIce(temperature);
+
+		return vaporPres / satVaporPres;
+	}
+
+	/**
+	 * Computes relative humidity w.r.t. ice using temperature and dewpoint.
+	 * 
+	 * @param temperature Units: Kelvins
+	 * @param frostPoint  Units: Kelvins
+	 * @return <b>relativeHumidityWrtIce</b> Units: Fraction (not Percent!)
+	 */
+	public static double relativeHumidityWrtIceUsingDewpoint(double temperature, double dewpoint) {
+		double vaporPres = vaporPressure(dewpoint);
 		double satVaporPres = vaporPressureWrtIce(temperature);
 
 		return vaporPres / satVaporPres;
