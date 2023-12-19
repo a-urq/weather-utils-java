@@ -2,6 +2,8 @@ package com.ameliaWx.weatherUtils;
 
 import java.util.ArrayList;
 
+import com.ameliaWx.ecape4j.Ecape;
+
 /**
  * @author Amelia Urquhart
  * @apiNote All methods use SI units, except for angles which use degrees. A
@@ -112,7 +114,7 @@ public class WeatherUtils {
 	 * 
 	 * @param temperature            Units: Kelvins
 	 * @param relativeHumidityWrtIce Units: Fraction (not Percent!)
-	 * @return <b>frostPoint</b>     Units: Kelvins
+	 * @return <b>frostPoint</b> Units: Kelvins
 	 */
 	public static double frostPoint(double temperature, double relativeHumidityWrtIce) {
 		double e0 = 611; // Pascals
@@ -129,8 +131,8 @@ public class WeatherUtils {
 	/**
 	 * Computes the frost point using the dewpoint.
 	 * 
-	 * @param dewpoint               Units: Kelvins
-	 * @return <b>frostPoint</b>     Units: Kelvins
+	 * @param dewpoint Units: Kelvins
+	 * @return <b>frostPoint</b> Units: Kelvins
 	 */
 	public static double frostPointFromDewpoint(double dewpoint) {
 		double t0 = 273.15; // Kelvins
@@ -629,7 +631,7 @@ public class WeatherUtils {
 
 			return force;
 		} else { // will only execute if dimensions == 3
-			double[] force = { f * v, -f * u, 2 * coriolisConstant * Math.cos(Math.toRadians(latitude)) * u};
+			double[] force = { f * v, -f * u, 2 * coriolisConstant * Math.cos(Math.toRadians(latitude)) * u };
 
 			return force;
 		}
@@ -640,32 +642,35 @@ public class WeatherUtils {
 	 * 
 	 * Assumes all arrays are sorted in order of increasing pressure.
 	 * 
-	 * @param pressure        Units: array of Pascals
-	 * @param height          Units: array of Meters
-	 * @param uWind           Units: array of m s^-1
-	 * @param vWind           Units: array of m s^-1
-	 * @param latitude        Units: Degrees
-	 * @param upperLimitPres  Units: Pascals, higher altitude (lower pres value)
-	 * @param lowerLimitPres  Units: Pascals, lower altitude (higher pres value)
+	 * @param pressure       Units: array of Pascals
+	 * @param height         Units: array of Meters
+	 * @param uWind          Units: array of m s^-1
+	 * @param vWind          Units: array of m s^-1
+	 * @param latitude       Units: Degrees
+	 * @param upperLimitPres Units: Pascals, higher altitude (lower pres value)
+	 * @param lowerLimitPres Units: Pascals, lower altitude (higher pres value)
 	 * @return <b>inferredTemperatureAdvection</b> Units: K s^-1
 	 */
-	public static double inferredTemperatureAdvection(double[] pressure, double[] height, double[] uWind, double[] vWind, double latitude, double upperLimitPres, double lowerLimitPres) {
+	public static double inferredTemperatureAdvection(double[] pressure, double[] height, double[] uWind,
+			double[] vWind, double latitude, double upperLimitPres, double lowerLimitPres) {
 		double coriolisParameter = coriolisParameter(latitude);
 
 //		double heightLower = logInterp(pressure, height, lowerLimitPres);
 		double uWindLower = logInterp(pressure, uWind, lowerLimitPres);
 		double vWindLower = logInterp(pressure, vWind, lowerLimitPres);
-		
+
 //		double heightUpper = logInterp(pressure, height, upperLimitPres);
 		double uWindUpper = logInterp(pressure, uWind, upperLimitPres);
 		double vWindUpper = logInterp(pressure, vWind, upperLimitPres);
-		
-		double dTdx = -(vWindUpper - vWindLower) * (coriolisParameter / (dryAirGasConstant * Math.log(lowerLimitPres/upperLimitPres)));
-		double dTdy = (uWindUpper - uWindLower) * (coriolisParameter / (dryAirGasConstant * Math.log(lowerLimitPres/upperLimitPres)));
+
+		double dTdx = -(vWindUpper - vWindLower)
+				* (coriolisParameter / (dryAirGasConstant * Math.log(lowerLimitPres / upperLimitPres)));
+		double dTdy = (uWindUpper - uWindLower)
+				* (coriolisParameter / (dryAirGasConstant * Math.log(lowerLimitPres / upperLimitPres)));
 
 		double dTdtValueSum = 0.0;
 		double dTdtWeightSum = 0.0;
-		
+
 		for (int i = 0; i < uWind.length - 1; i++) {
 			double pressure1 = pressure[i];
 			double uWind1 = uWind[i];
@@ -690,16 +695,16 @@ public class WeatherUtils {
 					uWind2 = logInterp(pressure, uWind, lowerLimitPres);
 					vWind2 = logInterp(pressure, vWind, lowerLimitPres);
 				}
-				
-				double dTdt = (uWind1 + uWind2)/2.0 * dTdx + (vWind1 + vWind2)/2.0 * dTdy;
-				double weight = (height1 - height2)/1000.0;
-				
+
+				double dTdt = (uWind1 + uWind2) / 2.0 * dTdx + (vWind1 + vWind2) / 2.0 * dTdy;
+				double weight = (height1 - height2) / 1000.0;
+
 				dTdtValueSum += dTdt * weight;
 				dTdtWeightSum += weight;
 			}
 		}
-		
-		double inferredTemperatureAdvection = dTdtValueSum/dTdtWeightSum;
+
+		double inferredTemperatureAdvection = dTdtValueSum / dTdtWeightSum;
 		return inferredTemperatureAdvection;
 	}
 
@@ -786,6 +791,7 @@ public class WeatherUtils {
 	 * @param envTemperature    Units: array of Kelvins
 	 * @param envDewpoint       Units: array of Kelvins
 	 * @param parcelPressure    Units: array of Pascals
+	 * @param parcelHeight      Units: array of Meters
 	 * @param parcelTemperature Units: array of Kelvins
 	 * @param parcelDewpoint    Units: array of Kelvins
 	 * @return <b>potentialEnergy</b> Units: J kg^-1
@@ -846,6 +852,54 @@ public class WeatherUtils {
 		}
 
 		return potentialEnergy;
+	}
+
+	/**
+	 * Computes Entrainment CAPE according to Peters et. al. 2023.
+	 * 
+	 * @param envPressure
+	 * @param envTemperature
+	 * @param envDewpoint
+	 * @return
+	 */
+	public static double computeEcape(double[] pressure, double[] height, double[] temperature, double[] dewpoint,
+			double[] uWind, double[] vWind, ParcelPath pathType, StormMotion smVector) {
+		ArrayList<RecordAtLevel> parcelPath = null;
+		if(pathType == ParcelPath.INFLOW_LAYER) {
+			parcelPath = WeatherUtils.computeInflowLayerParcelPath(pressure, height, temperature, dewpoint,
+				false);
+		} else {
+			parcelPath = WeatherUtils.computeParcelPath(pressure, temperature, dewpoint, pathType,
+				false);
+		}
+
+		double cape = WeatherUtils.computeCape(pressure, temperature, dewpoint, parcelPath);
+		double lfc = WeatherUtils.levelOfFreeConvection(pressure, temperature, dewpoint, parcelPath);
+		double el = WeatherUtils.equilibriumLevel(pressure, temperature, dewpoint, parcelPath);
+
+		double[] eil = WeatherUtils.effectiveInflowLayer(pressure, height, temperature, dewpoint);
+
+		double[] stormMotion = null;
+
+		switch (smVector) {
+		case BUNKERS_LEFT:
+			stormMotion = WeatherUtils.stormMotionBunkersIDLeftMoving(pressure, height, uWind, vWind);
+			break;
+		case BUNKERS_RIGHT:
+			stormMotion = WeatherUtils.stormMotionBunkersIDRightMoving(pressure, height, uWind, vWind);
+			break;
+		case MEAN_WIND:
+			stormMotion = WeatherUtils.stormMotionBunkersIDMeanWindComponent(pressure, height, uWind, vWind);
+			break;
+		default:
+			stormMotion = WeatherUtils.stormMotionBunkersIDRightMoving(pressure, height, uWind, vWind);
+			break;
+		}
+		
+		double ecape = Ecape.entrainmentCape(pressure, height, temperature, dewpoint, uWind, vWind, stormMotion, eil[0],
+				eil[1], parcelPath.get(0).height, cape, lfc, el);
+
+		return ecape;
 	}
 
 	/**
@@ -2119,6 +2173,7 @@ public class WeatherUtils {
 	 * @param envTemperature    Units: Kelvins
 	 * @param envDewpoint       Units: Kelvins
 	 * @param parcelPressure    Units: Pascals
+	 * @param parcelHeight      Units: Meters
 	 * @param parcelTemperature Units: Kelvins
 	 * @param parcelDewpoint    Units: Kelvins
 	 * @return <b>liftedCondensationLevel</b> Units: Meters
@@ -2282,6 +2337,101 @@ public class WeatherUtils {
 		}
 
 		return lcl;
+	}
+
+	/**
+	 * Computes the maximum parcel level given the environment and a parcel path.
+	 * Assumes that all arrays are sorted by increasing pressure. <br>
+	 * <br>
+	 * 
+	 * <b>SPECIAL VALUE RETURN:</b> -2048.0, means that MPL is above the top of the
+	 * given parcel path
+	 * 
+	 * @param envPressure    Units: array of Pascals
+	 * @param envTemperature Units: array of Kelvins
+	 * @param envDewpoint    Units: array of Kelvins
+	 * @param parcelPath     Type: ArrayList of RecordAtLevel, should be type
+	 *                       returned by computeParcelPath()
+	 * @return <b>maximumParcelLevel</b> Units: Meters
+	 */
+	public static double maximumParcelLevel(double[] envPressure, double[] envTemperature, double[] envDewpoint,
+			ArrayList<RecordAtLevel> parcelPath) {
+		double[] parcelPressure = new double[parcelPath.size()];
+		double[] parcelHeight = new double[parcelPath.size()];
+		double[] parcelTemperature = new double[parcelPath.size()];
+		double[] parcelDewpoint = new double[parcelPath.size()];
+
+		for (int i = 0; i < parcelPath.size(); i++) {
+			parcelPressure[i] = parcelPath.get(parcelPath.size() - 1 - i).pressure;
+			parcelHeight[i] = parcelPath.get(parcelPath.size() - 1 - i).height;
+			parcelTemperature[i] = parcelPath.get(parcelPath.size() - 1 - i).temperature;
+			parcelDewpoint[i] = parcelPath.get(parcelPath.size() - 1 - i).dewpoint;
+		}
+
+		return maximumParcelLevel(envPressure, envTemperature, envDewpoint, parcelPressure, parcelHeight,
+				parcelTemperature, parcelDewpoint);
+	}
+
+	/**
+	 * Computes the maximum parcel level given the environment and a parcel path.
+	 * Assumes that all arrays are sorted by increasing pressure. <br>
+	 * <br>
+	 * 
+	 * <b>SPECIAL VALUE RETURN:</b> -2048.0, means that MPL is above the top of the
+	 * given parcel path
+	 * 
+	 * @param envPressure       Units: Pascals
+	 * @param envTemperature    Units: Kelvins
+	 * @param envDewpoint       Units: Kelvins
+	 * @param parcelPressure    Units: Pascals
+	 * @param parcelHeight      Units: Meters
+	 * @param parcelTemperature Units: Kelvins
+	 * @param parcelDewpoint    Units: Kelvins
+	 * @return <b>maximumParcelLevel</b> Units: Meters
+	 */
+	public static double maximumParcelLevel(double[] envPressure, double[] envTemperature, double[] envDewpoint,
+			double[] parcelPressure, double[] parcelHeight, double[] parcelTemperature, double[] parcelDewpoint) {
+		if (parcelHeight.length < 2)
+			return -2048.0;
+
+		double el = equilibriumLevel(envPressure, envTemperature, envDewpoint, parcelPressure, parcelHeight,
+				parcelTemperature, parcelDewpoint);
+		double cape = computeCape(envPressure, envTemperature, envDewpoint, parcelPressure, parcelHeight,
+				parcelTemperature, parcelDewpoint);
+
+		double mplCape = 0.0; // not really cape, just tracks whether the negative area above the EL is bigger
+								// than the CAPE area yet
+
+		for (int i = parcelPressure.length - 2; i >= 0; i--) {
+			if (parcelHeight[i] < el) {
+				continue;
+			} else {
+				double pPres = parcelPressure[i];
+				double pTemp = parcelTemperature[i];
+				double pDwpt = parcelDewpoint[i];
+
+				double ePres = parcelPressure[i];
+				double eTemp = logInterp(envPressure, envTemperature, ePres);
+				double eDwpt = logInterp(envPressure, envDewpoint, ePres);
+
+				double eVirtTemp = virtualTemperature(eTemp, eDwpt, ePres);
+				double pVirtTemp = virtualTemperature(pTemp, pDwpt, pPres);
+
+				double energyAdded = gravAccel * (pVirtTemp - eVirtTemp) / eVirtTemp;
+
+				double dz = parcelHeight[i] - parcelHeight[i + 1];
+
+				mplCape += energyAdded * dz;
+
+//				System.out.println(parcelHeight[i] + "\t" + mplCape + "\t" + cape + "\t");
+
+				if (-mplCape > cape) {
+					return parcelHeight[i];
+				}
+			}
+		}
+
+		return -2048.0;
 	}
 
 	/**
@@ -3370,6 +3520,10 @@ public class WeatherUtils {
 		double[] dgzLayer = new double[2];
 
 		for (int i = dewpoint.length - 1; i >= 1; i--) {
+			if (height[i] > 16000) {
+				continue;
+			}
+
 			double height1 = height[i];
 			double temperature1 = temperature[i];
 

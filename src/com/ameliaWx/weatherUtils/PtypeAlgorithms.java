@@ -84,8 +84,11 @@ public class PtypeAlgorithms {
 
 		// looks for first level with RH >= 90
 		for (int i = 0; i < dptIsobaric.length; i++) {
-			double rh = WeatherUtils.relativeHumidity(isobaricData.get(i).temperature, isobaricData.get(i).dewpoint);
+			double rhWater = WeatherUtils.relativeHumidity(isobaricData.get(i).temperature, isobaricData.get(i).dewpoint);
+			double rhIce = WeatherUtils.relativeHumidityWrtIceUsingDewpoint(isobaricData.get(i).temperature, isobaricData.get(i).dewpoint);
 
+			double rh = Double.max(rhWater, rhIce);
+			
 			if (rh >= SATURATION_THRESHOLD_RH) {
 				initPressureLayer = isobaricData.get(i).pressure;
 				break;
@@ -243,7 +246,10 @@ public class PtypeAlgorithms {
 
 		// looks for first level with RH >= 90
 		for (int i = 0; i < dptIsobaric.length; i++) {
-			double rh = WeatherUtils.relativeHumidity(isobaricData.get(i).temperature, isobaricData.get(i).dewpoint);
+			double rhWater = WeatherUtils.relativeHumidity(isobaricData.get(i).temperature, isobaricData.get(i).dewpoint);
+			double rhIce = WeatherUtils.relativeHumidityWrtIceUsingDewpoint(isobaricData.get(i).temperature, isobaricData.get(i).dewpoint);
+
+			double rh = Double.max(rhWater, rhIce);
 
 			if (rh >= SATURATION_THRESHOLD_RH) {
 				initPressureLayer = isobaricData.get(i).pressure;
@@ -288,9 +294,9 @@ public class PtypeAlgorithms {
 					remeltingEnergy += Math.abs(trapezoidArea);
 				}
 
-				System.out.printf("%5.1f\t%5.1f\t%5d\t%5d\t", (wetbulbUpper - 273.15), (wetbulbLower - 273.15),
-						(int) heightUpper, (int) heightLower);
-				System.out.printf("%08.1fM/%8s ", trapezoidArea, "");
+//				System.out.printf("%5.1f\t%5.1f\t%5d\t%5d\t", (wetbulbUpper - 273.15), (wetbulbLower - 273.15),
+//						(int) heightUpper, (int) heightLower);
+//				System.out.printf("%08.1fM/%8s ", trapezoidArea, "");
 			} else if (wetbulbUpper <= 273.15 && wetbulbLower <= 273.15) {
 				// trapezoidal integration
 				double trapezoidWidthLower = G * ((wetbulbLower - T0) / T0);
@@ -305,9 +311,9 @@ public class PtypeAlgorithms {
 					refreezingEnergy += Math.abs(trapezoidArea);
 				}
 
-				System.out.printf("%5.1f\t%5.1f\t%5d\t%5d\t", (wetbulbUpper - 273.15), (wetbulbLower - 273.15),
-						(int) heightUpper, (int) heightLower);
-				System.out.printf("%08.1fF/%8s ", trapezoidArea, "");
+//				System.out.printf("%5.1f\t%5.1f\t%5d\t%5d\t", (wetbulbUpper - 273.15), (wetbulbLower - 273.15),
+//						(int) heightUpper, (int) heightLower);
+//				System.out.printf("%08.1fF/%8s ", trapezoidArea, "");
 			} else if (wetbulbUpper <= 273.15 && wetbulbLower > 273.15) {
 				// trapezoidal integration
 				double trapezoidWidthLower = G * ((wetbulbLower - T0) / T0);
@@ -332,9 +338,9 @@ public class PtypeAlgorithms {
 					remeltingEnergy += Math.abs(meltingTrapezoidArea);
 				}
 
-				System.out.printf("%5.1f\t%5.1f\t%5d\t%5d\t", (wetbulbUpper - 273.15), (wetbulbLower - 273.15),
-						(int) heightUpper, (int) heightLower);
-				System.out.printf("%08.1fF/%08.1fM ", freezingTrapezoidArea, meltingTrapezoidArea);
+//				System.out.printf("%5.1f\t%5.1f\t%5d\t%5d\t", (wetbulbUpper - 273.15), (wetbulbLower - 273.15),
+//						(int) heightUpper, (int) heightLower);
+//				System.out.printf("%08.1fF/%08.1fM ", freezingTrapezoidArea, meltingTrapezoidArea);
 			} else if (wetbulbUpper > 273.15 && wetbulbLower <= 273.15) {
 				// trapezoidal integration
 				double trapezoidWidthLower = G * ((wetbulbLower - T0) / T0);
@@ -360,14 +366,14 @@ public class PtypeAlgorithms {
 					remeltingEnergy += Math.abs(meltingTrapezoidArea);
 				}
 
-				System.out.printf("%5.1f\t%5.1f\t%5d\t%5d\t", (wetbulbUpper - 273.15), (wetbulbLower - 273.15),
-						(int) heightUpper, (int) heightLower);
-				System.out.printf("%08.1fM/%08.1fF ", meltingTrapezoidArea, freezingTrapezoidArea);
+//				System.out.printf("%5.1f\t%5.1f\t%5d\t%5d\t", (wetbulbUpper - 273.15), (wetbulbLower - 273.15),
+//						(int) heightUpper, (int) heightLower);
+//				System.out.printf("%08.1fM/%08.1fF ", meltingTrapezoidArea, freezingTrapezoidArea);
 			}
 
-			System.out.printf("Pressure: %4d, Melting Energy: %4d J/kg, Refreezing Energy: %4d J/kg, T_w: %4.1f C\n",
-					(int) isobaricData.get(i).pressure / 100, (int) (meltingEnergy + remeltingEnergy),
-					(int) refreezingEnergy, (wetbulbLower - 273.15));
+//			System.out.printf("Pressure: %4d, Melting Energy: %4d J/kg, Refreezing Energy: %4d J/kg, T_w: %4.1f C\n",
+//					(int) isobaricData.get(i).pressure / 100, (int) (meltingEnergy + remeltingEnergy),
+//					(int) refreezingEnergy, (wetbulbLower - 273.15));
 		}
 
 		return refreezingEnergy;
@@ -439,8 +445,10 @@ public class PtypeAlgorithms {
 			for (int i = 0; i < isobaricData.size(); i++) {
 //				System.out.println(isobaricData.get(i).pressure/100 + "\t" + dewpointDepression);
 
-				double rh = WeatherUtils.relativeHumidity(isobaricData.get(i).temperature,
-						isobaricData.get(i).dewpoint);
+				double rhWater = WeatherUtils.relativeHumidity(isobaricData.get(i).temperature, isobaricData.get(i).dewpoint);
+				double rhIce = WeatherUtils.relativeHumidityWrtIceUsingDewpoint(isobaricData.get(i).temperature, isobaricData.get(i).dewpoint);
+
+				double rh = Double.max(rhWater, rhIce);
 
 				if (rh >= SATURATION_THRESHOLD_RH) {
 					initPressureLayer = isobaricData.get(i).pressure;
@@ -1125,8 +1133,10 @@ public class PtypeAlgorithms {
 		if (dynamicInitLayer) {
 			// looks for first level with RH >= 90
 			for (int i = 0; i < isobaricData.size(); i++) {
-				double rh = WeatherUtils.relativeHumidity(isobaricData.get(i).temperature,
-						isobaricData.get(i).dewpoint);
+				double rhWater = WeatherUtils.relativeHumidity(isobaricData.get(i).temperature, isobaricData.get(i).dewpoint);
+				double rhIce = WeatherUtils.relativeHumidityWrtIceUsingDewpoint(isobaricData.get(i).temperature, isobaricData.get(i).dewpoint);
+
+				double rh = Double.max(rhWater, rhIce);
 				
 				if(debug) System.out.println("checking for init layer @ <" + isobaricData.get(i).pressure + ">: " + rh);
 
@@ -1342,6 +1352,11 @@ public class PtypeAlgorithms {
 		if (meltingEnergy > 0) {
 			double probIcepI = (2.3 * refreezingEnergy - 42 * Math.log(meltingEnergy + remeltingEnergy + 1) + 3)
 					/ 100.0; // fraction, NOT PERCENT
+			if ((meltingEnergy) < 5) {
+				probIcepI = 0.2 * probIcepI * (meltingEnergy + remeltingEnergy); // fraction, NOT PERCENT
+			}
+			
+			if(debug) System.out.println("prob icep I: " + probIcepI);
 			if (probIcepI > 1)
 				probIcepI = 1;
 			if (probIcepI < 0)
@@ -1350,13 +1365,13 @@ public class PtypeAlgorithms {
 		}
 
 		double probRainI = (-2.1 * refreezingEnergy + 0.2 * (meltingEnergy + remeltingEnergy) + 458) / 100.0;
+		if (meltingEnergy < 5) {
+			probRainI = 0.2 * probRainI * (meltingEnergy + remeltingEnergy); // fraction, NOT PERCENT
+		}
 		if (probRainI > 1)
 			probRainI = 1;
 		if (probRainI < 0)
 			probRainI = 0;
-		if (meltingEnergy < 5) {
-			probRainI = 0.2 * probRainI * (meltingEnergy + remeltingEnergy); // fraction, NOT PERCENT
-		}
 
 		double probRain = (1 - probIce) + probIce * probRainI; // fraction, NOT PERCENT
 		if (probRain > 1)
@@ -1446,7 +1461,7 @@ public class PtypeAlgorithms {
 			double[] dptIsobaric, double[] hgtIsobaric, double presSurface, double hgtSurface, double tmpSurface,
 			boolean dynamicInitLayer) {
 		PrecipitationType preExtension = bourgouinRevisedMethod(pressureLevels, tmpIsobaric, dptIsobaric, hgtIsobaric,
-				presSurface, hgtSurface, true);
+				presSurface, hgtSurface, dynamicInitLayer, true);
 
 //		System.out.println(Arrays.toString(pressureLevels));
 //		System.out.println(Arrays.toString(tmpIsobaric));
@@ -1684,7 +1699,10 @@ public class PtypeAlgorithms {
 		double initPressureLayer = 50000;
 
 		for (int i = 0; i < isobaricData.size(); i++) {
-			double rh = WeatherUtils.relativeHumidity(isobaricData.get(i).temperature, isobaricData.get(i).dewpoint);
+			double rhWater = WeatherUtils.relativeHumidity(isobaricData.get(i).temperature, isobaricData.get(i).dewpoint);
+			double rhIce = WeatherUtils.relativeHumidityWrtIceUsingDewpoint(isobaricData.get(i).temperature, isobaricData.get(i).dewpoint);
+
+			double rh = Double.max(rhWater, rhIce);
 
 			if (rh >= SATURATION_THRESHOLD_RH) {
 				initPressureLayer = isobaricData.get(i).pressure;
